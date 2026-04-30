@@ -29,6 +29,8 @@ def main() -> None:
             RouteRequest(task=args.task, private=args.private == "true")
         )
         print(f"route: {decision.target}")
+        print(f"provider: {decision.provider}")
+        print(f"model: {decision.model}")
         print(f"reason: {decision.reason}")
         print(f"complexity: {decision.complexity}")
         print(f"verify: {decision.verify}")

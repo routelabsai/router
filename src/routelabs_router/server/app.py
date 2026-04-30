@@ -3,21 +3,38 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from routelabs_router.config import load_config
-from routelabs_router.models import RouteDecision, RouteRequest
+from routelabs_router.models import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    RouteDecision,
+    RouteRequest,
+)
 from routelabs_router.router import RouterEngine
-
-CONFIG_PATH = Path("./config/router.yaml")
-config = load_config(CONFIG_PATH)
-engine = RouterEngine(config)
-
-app = FastAPI(title="RouteLabs Router", version="0.1.0")
+from routelabs_router.service import ChatService
 
 
-@app.get("/healthz")
-def healthcheck() -> dict[str, str]:
-    return {"status": "ok"}
+def create_app(
+    config_path: Path | None = None, service: ChatService | None = None
+) -> FastAPI:
+    resolved_path = config_path or Path("./config/router.yaml")
+    config = load_config(resolved_path)
+    engine = RouterEngine(config)
+    chat_service = service or ChatService(config, router=engine)
+    app = FastAPI(title="RouteLabs Router", version="0.1.0")
+
+    @app.get("/healthz")
+    def healthcheck() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.post("/v1/route", response_model=RouteDecision)
+    def route(request: RouteRequest) -> RouteDecision:
+        return engine.decide(request)
+
+    @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+    def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
+        return chat_service.create_chat_completion(request)
+
+    return app
 
 
-@app.post("/v1/route", response_model=RouteDecision)
-def route(request: RouteRequest) -> RouteDecision:
-    return engine.decide(request)
+app = create_app()

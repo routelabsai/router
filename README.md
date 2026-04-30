@@ -2,6 +2,88 @@
 
 `RouteLabs Router` is a Python-first, local-first inference control plane for hybrid LLM systems.
 
+It gives applications one endpoint that can decide:
+
+- when to stay local
+- when to use the cloud
+- when privacy should override convenience
+- which provider and model should handle the request
+- why that decision was made
+
+The goal is simple: route each step to the cheapest, fastest, safest model that can still be trusted.
+
+## Why Use This
+
+Most teams today have one of these problems:
+
+- `Ollama` runs local models well, but it does not decide when a task should stay local versus escalate
+- cloud gateways like `LiteLLM` and `OpenRouter` route across hosted APIs, but they are not built around local-first policy decisions
+- chat apps can call models, but they usually hide the execution logic instead of exposing it
+
+`RouteLabs Router` is the layer above those tools.
+
+It is for teams who want:
+
+- one API for hybrid local + cloud inference
+- transparent routing decisions
+- privacy-aware defaults
+- provider and model selection that can evolve over time
+- a foundation for agentic step-level routing later
+
+## What It Looks Like
+
+```text
+app / agent / extension
+        |
+        v
+  RouteLabs Router
+        |
+        +--> policy + task complexity
+        +--> privacy constraints
+        +--> provider selection
+        +--> verification hooks
+        |
+        +--> Ollama
+        +--> llama.cpp
+        +--> cloud provider
+```
+
+## Quick Demo
+
+Once the server is running, you can inspect decisions directly:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/route \
+  -H "Content-Type: application/json" \
+  -d '{"task":"summarize a short product description","private":false}'
+```
+
+Expected shape:
+
+```json
+{
+  "target": "local",
+  "provider": "ollama",
+  "model": "qwen3:4b",
+  "reason": "task is suitable for local-first execution",
+  "complexity": "medium",
+  "verify": true
+}
+```
+
+And you can send an OpenAI-style chat request:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages":[{"role":"user","content":"Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity."}],
+    "private":false
+  }'
+```
+
+If `Ollama` is running locally, that request executes against your configured local model.
+
 It sits between applications and model runtimes, then decides whether a request should run on a local model or a cloud model based on:
 
 - cost
@@ -10,8 +92,6 @@ It sits between applications and model runtimes, then decides whether a request 
 - privacy policy
 - runtime health
 - verification signals
-
-The goal is simple: route each step to the cheapest, fastest, safest model that can still be trusted.
 
 ## Why this exists
 
@@ -34,6 +114,15 @@ What is still missing is a policy-aware scheduler that:
 
 That is the problem this project is designed to solve.
 
+## Positioning
+
+| Tool | Core strength | What it does not solve |
+| --- | --- | --- |
+| `Ollama` | Great local model runtime and API | Hybrid routing and policy decisions |
+| `LiteLLM` | Cloud API normalization and routing | Local-first execution strategy |
+| `OpenRouter` | Hosted provider access and fallback | On-device privacy-aware control plane |
+| `RouteLabs Router` | Policy-aware hybrid local/cloud routing | Full cloud adapter coverage is still in progress |
+
 ## MVP scope
 
 The first version focuses on a narrow but useful slice:
@@ -46,6 +135,13 @@ The first version focuses on a narrow but useful slice:
 
 This repository intentionally starts small. It is a control-plane foundation, not a full chat app.
 
+## Use Cases
+
+- Local-first copilots that should only escalate when a task gets difficult
+- Privacy-sensitive workflows where private data should never leave the device
+- Browser or desktop assistants that need one middleware layer above multiple runtimes
+- Agent systems that want future step-level routing instead of a single fixed model
+
 ## Initial architecture
 
 - `routerd`: local HTTP daemon built with `FastAPI`
@@ -57,29 +153,61 @@ This repository intentionally starts small. It is a control-plane foundation, no
 
 ## Current status
 
-This is an early scaffold. The repository already includes:
+This is an early but working scaffold. The repository already includes:
 
 - project docs
 - roadmap
 - contribution guide
 - Python project metadata
-- minimal API server and CLI
+- `FastAPI` server and CLI
 - YAML config loading
-- basic route decision flow
+- route inspection endpoint
+- OpenAI-style `/v1/chat/completions` endpoint
+- real local execution through `Ollama`
+- test coverage for routing and API behavior
+- example config profiles
+- example curl flows
 
 ## Getting started
 
 ### Prerequisites
 
 - Python `3.11+`
+- `conda` recommended for the smoothest setup on macOS
 
-### Install dependencies
+### Create the environment
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+conda create -n routelabs-router python=3.11 -y
+conda activate routelabs-router
+python -m pip install --upgrade pip setuptools wheel
+pip install -e '.[dev]'
 ```
+
+### Why `conda` is the recommended path
+
+During validation we hit two common issues that `conda` + Python `3.11` resolved cleanly:
+
+- Python `3.9.7` was too old for this project
+- older packaging tooling made editable installs unreliable
+
+If you see `requires a different Python: 3.9.7 not in '>=3.11'`, create the `conda` environment above and retry.
+
+### Run tests
+
+```bash
+pytest
+```
+
+### Optional profile configs
+
+The repo includes starter profiles in [`config/profiles/`](config/profiles):
+
+- `balanced.yaml`
+- `local-first.yaml`
+- `privacy-first.yaml`
+
+Use one as your active config by copying or merging it into [`config/router.yaml`](config/router.yaml).
 
 ### Run the daemon
 
@@ -90,8 +218,54 @@ uvicorn routelabs_router.server.app:app --reload
 ### Inspect a routing decision
 
 ```bash
-router route --task "summarize this document" --private false
+router route --task "summarize a short product description" --private false
 ```
+
+### Test the API
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+```
+
+Route inspection:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/route \
+  -H "Content-Type: application/json" \
+  -d '{"task":"summarize a short product description","private":false}'
+```
+
+OpenAI-style chat completion:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages":[{"role":"user","content":"Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity."}],
+    "private":false
+  }'
+```
+
+If `Ollama` is running locally, the chat endpoint will execute against your configured local model. If the router decides a task should go to the cloud, the API currently returns `501` until the first cloud adapter is added.
+
+### Run with Ollama
+
+Start `Ollama`, make sure the configured model exists, then run the server:
+
+```bash
+ollama serve
+ollama pull qwen3:4b
+uvicorn routelabs_router.server.app:app --reload
+```
+
+The default local provider configuration lives in [`config/router.yaml`](config/router.yaml).
+
+### More examples
+
+- curl walkthrough: [`examples/curl-quickstart.md`](examples/curl-quickstart.md)
+- product framing and common scenarios: [`examples/use-cases.md`](examples/use-cases.md)
 
 ## Example routing philosophy
 
@@ -102,26 +276,14 @@ router route --task "summarize this document" --private false
 
 ## Near-term roadmap
 
-- OpenAI-compatible `/v1/chat/completions` endpoint
-- adapters for `Ollama` and generic OpenAI-compatible providers
+- generic OpenAI-compatible cloud adapter
 - policy packs for privacy and cost controls
 - task classification and prompt-shape heuristics
 - verification hooks and fallback thresholds
 - benchmark harness for local vs cloud trade-off analysis
 
-More detail lives in [ROADMAP.md](/Users/saisandeepkantareddy/Downloads/untitled%20folder%202/ROADMAP.md).
-
-## Suggested GitHub setup
-
-- organization: `routelabsai`
-- repository: `router`
-
-If those names are taken, alternatives:
-
-- `modelrouter`
-- `infrarouter`
-- `taskrouter`
+More detail lives in [ROADMAP.md](ROADMAP.md).
 
 ## License
 
-This scaffold uses the MIT License. See [LICENSE](/Users/saisandeepkantareddy/Downloads/untitled%20folder%202/LICENSE).
+This scaffold uses the MIT License. See [LICENSE](LICENSE).

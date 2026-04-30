@@ -23,6 +23,20 @@ The long-term system has five major responsibilities:
 7. Verification may accept the result or trigger escalation.
 8. A decision trace is emitted for observability and benchmarking.
 
+## Current implementation
+
+Today the repository supports:
+
+- `/v1/route` for route inspection
+- `/v1/chat/completions` for OpenAI-style chat requests
+- `Ollama` as the first real execution backend
+
+The current execution behavior is intentionally conservative:
+
+- local routes execute through `Ollama`
+- cloud-routed requests return `501` until a cloud adapter is added
+- the routing decision is included in the chat response for transparency
+
 ## Near-term implementation shape
 
 - `routelabs_router/server`
@@ -35,6 +49,10 @@ The long-term system has five major responsibilities:
   - route decision engine
 - `routelabs_router/models.py`
   - shared request and decision models
+- `routelabs_router/service.py`
+  - chat execution orchestration
+- `routelabs_router/adapters`
+  - provider adapters
 
 ## Planned extension points
 

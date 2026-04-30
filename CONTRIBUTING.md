@@ -32,13 +32,21 @@ Routing policy, verification, and fallback logic should be backed by tests whene
 ## Development
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+conda create -n routelabs-router python=3.11 -y
+conda activate routelabs-router
+python -m pip install --upgrade pip setuptools wheel
+pip install -e '.[dev]'
 pytest
 uvicorn routelabs_router.server.app:app --reload
 router route --task "classify this email"
 ```
+
+## Environment notes
+
+- use Python `3.11+`
+- prefer the `conda` environment above over a system Python on macOS
+- if `fastapi.testclient` complains about missing `httpx`, reinstall with `pip install -e '.[dev]'`
+- if editable install fails under an older environment, check `python --version` first
 
 ## Areas where help is especially welcome
 

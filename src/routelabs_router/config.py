@@ -96,6 +96,15 @@ def load_config(path: str | Path) -> Config:
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
-    merged = DEFAULT_CONFIG.model_dump()
-    merged.update(raw)
+    merged = _deep_merge(DEFAULT_CONFIG.model_dump(), raw)
     return Config.model_validate(merged)
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merged[key] = _deep_merge(base[key], value)
+        else:
+            merged[key] = value
+    return merged

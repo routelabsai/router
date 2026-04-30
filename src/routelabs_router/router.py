@@ -12,6 +12,8 @@ class RouterEngine:
         if request.private and self.config.routing.prefer_local_for_private:
             return RouteDecision(
                 target="local",
+                provider=self.config.providers.local.default,
+                model=self._provider_model("local", self.config.providers.local.default),
                 reason="privacy policy prefers local execution for private tasks",
                 complexity=complexity,
                 verify=complexity != "low",
@@ -20,6 +22,8 @@ class RouterEngine:
         if complexity == "high":
             return RouteDecision(
                 target="cloud",
+                provider=self.config.providers.cloud.default,
+                model=self._provider_model("cloud", self.config.providers.cloud.default),
                 reason="high-complexity tasks default to stronger remote models",
                 complexity=complexity,
                 verify=True,
@@ -27,10 +31,22 @@ class RouterEngine:
 
         return RouteDecision(
             target="local",
+            provider=self.config.providers.local.default,
+            model=self._provider_model("local", self.config.providers.local.default),
             reason="task is suitable for local-first execution",
             complexity=complexity,
             verify=complexity == "medium",
         )
+
+    def _provider_model(self, target: str, provider: str) -> str:
+        if target == "local":
+            if provider == "ollama":
+                return self.config.providers.local.ollama.model
+            if provider == "llamacpp":
+                return self.config.providers.local.llamacpp.model
+        if target == "cloud" and provider == "openai-compatible":
+            return self.config.providers.cloud.openai_compatible.model
+        return "unknown"
 
 
 def classify_complexity(task: str) -> str:

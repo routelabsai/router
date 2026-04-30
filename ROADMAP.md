@@ -25,13 +25,19 @@ Build an open-source inference control plane that can route agent and applicatio
 - support an OpenAI-style request envelope internally
 - add rule-based task classification
 - add `Ollama` adapter
-- add generic OpenAI-compatible adapter
+- add generic OpenAI-compatible cloud adapter
 - route based on:
   - privacy requirement
   - estimated complexity
   - local runtime availability
   - configured cost and latency preferences
 - add fallback from local to cloud when verification fails
+
+Current status:
+- route inspection endpoint implemented
+- `Ollama` local chat execution implemented
+- OpenAI-style `/v1/chat/completions` endpoint implemented
+- cloud execution still pending
 
 ## Phase 2: Verification and evaluation
 

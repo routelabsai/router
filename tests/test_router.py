@@ -19,9 +19,11 @@ def test_private_requests_prefer_local() -> None:
     engine = RouterEngine(DEFAULT_CONFIG)
     decision = engine.decide(RouteRequest(task="research strategy", private=True))
     assert decision.target == "local"
+    assert decision.provider == "ollama"
 
 
 def test_high_complexity_defaults_to_cloud() -> None:
     engine = RouterEngine(DEFAULT_CONFIG)
     decision = engine.decide(RouteRequest(task="design architecture for a multi-step system"))
     assert decision.target == "cloud"
+    assert decision.provider == "openai-compatible"

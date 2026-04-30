@@ -1,0 +1,26 @@
+server:
+  host: "127.0.0.1"
+  port: 8787
+
+routing:
+  default_mode: "balanced"
+  escalate_on_verification_failure: true
+  prefer_local_for_private: true
+
+providers:
+  local:
+    default: "ollama"
+    ollama:
+      base_url: "http://127.0.0.1:11434"
+      model: "qwen3:4b"
+  cloud:
+    default: "openai-compatible"
+    openai_compatible:
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-4.1-mini"
+
+policies:
+  privacy:
+    deny_cloud_when_private: true
+  complexity:
+    local_max: "medium"
