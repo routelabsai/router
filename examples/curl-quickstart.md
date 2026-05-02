@@ -3,7 +3,7 @@
 These examples assume:
 
 - `conda activate routelabs-router`
-- `uvicorn routelabs_router.server.app:app --reload`
+- `router start --reload`
 - `Ollama` is running locally for live chat execution
 - `OPENAI_API_KEY` is optional for cloud-routed live execution
 

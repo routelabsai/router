@@ -37,7 +37,7 @@ conda activate routelabs-router
 python -m pip install --upgrade pip setuptools wheel
 pip install -e '.[dev]'
 pytest
-uvicorn routelabs_router.server.app:app --reload
+router start --reload
 router route --task "classify this email"
 ```
 

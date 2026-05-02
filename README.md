@@ -221,7 +221,13 @@ Use one as your active config by copying or merging it into [`config/router.yaml
 ### Run the daemon
 
 ```bash
-uvicorn routelabs_router.server.app:app --reload
+router start --reload
+```
+
+If you want explicit host/port overrides:
+
+```bash
+router start --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Inspect a routing decision

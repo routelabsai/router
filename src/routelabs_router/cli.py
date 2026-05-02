@@ -1,9 +1,12 @@
 import argparse
 from pathlib import Path
 
+import uvicorn
+
 from routelabs_router.config import load_config
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
+from routelabs_router.server.app import create_app
 
 
 def main() -> None:
@@ -20,6 +23,16 @@ def main() -> None:
         help="Whether the task contains private data",
     )
 
+    start_parser = subparsers.add_parser("start", help="Start the RouteLabs server")
+    start_parser.add_argument("--config", default="./config/router.yaml")
+    start_parser.add_argument("--host", default=None)
+    start_parser.add_argument("--port", type=int, default=None)
+    start_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for local development",
+    )
+
     args = parser.parse_args()
 
     if args.command == "route":
@@ -34,3 +47,12 @@ def main() -> None:
         print(f"reason: {decision.reason}")
         print(f"complexity: {decision.complexity}")
         print(f"verify: {decision.verify}")
+    elif args.command == "start":
+        config = load_config(Path(args.config))
+        app = create_app(Path(args.config))
+        uvicorn.run(
+            app,
+            host=args.host or config.server.host,
+            port=args.port or config.server.port,
+            reload=args.reload,
+        )
