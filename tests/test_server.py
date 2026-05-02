@@ -27,6 +27,16 @@ class FakeCloudProvider:
         )
 
 
+class WeakLocalProvider:
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        return ProviderResult(
+            content="I don't see any document or enough information to answer confidently.",
+            model=model or "weak-local-model",
+        )
+
+
 def test_route_endpoint_returns_provider_metadata() -> None:
     app = create_app()
     client = TestClient(app)
@@ -63,13 +73,14 @@ def test_chat_completions_uses_local_provider() -> None:
     data = response.json()
     assert data["choices"][0]["message"]["content"] == "echo: summarize this document"
     assert data["route"]["provider"] == "ollama"
+    assert data["trace"]["escalated"] is False
 
 
 def test_chat_completions_uses_cloud_provider_for_high_complexity_tasks() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
         router=RouterEngine(DEFAULT_CONFIG),
-        providers={"ollama": FakeProvider(), "openai-compatible": FakeCloudProvider()},
+        providers={"ollama": WeakLocalProvider(), "openai-compatible": FakeCloudProvider()},
     )
     app = create_app(service=service)
     client = TestClient(app)
@@ -91,10 +102,18 @@ def test_chat_completions_uses_cloud_provider_for_high_complexity_tasks() -> Non
     data = response.json()
     assert data["choices"][0]["message"]["content"] == "cloud: architecture answer"
     assert data["route"]["provider"] == "openai-compatible"
+    assert data["trace"]["initial_route"]["provider"] == "ollama"
+    assert data["trace"]["escalated"] is True
+    assert data["trace"]["verification"]["should_escalate"] is True
 
 
-def test_chat_completions_returns_clear_error_when_cloud_provider_is_unconfigured() -> None:
-    app = create_app()
+def test_chat_completions_returns_local_answer_with_trace_when_cloud_provider_is_unconfigured() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": WeakLocalProvider()},
+    )
+    app = create_app(service=service)
     client = TestClient(app)
 
     response = client.post(
@@ -110,5 +129,8 @@ def test_chat_completions_returns_clear_error_when_cloud_provider_is_unconfigure
         },
     )
 
-    assert response.status_code == 501
-    assert "not configured" in response.json()["detail"]
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "ollama"
+    assert data["trace"]["escalated"] is False
+    assert "no cloud provider is configured" in data["trace"]["escalation_reason"]

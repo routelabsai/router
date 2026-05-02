@@ -21,10 +21,10 @@ class RouterEngine:
 
         if complexity == "high":
             return RouteDecision(
-                target="cloud",
-                provider=self.config.providers.cloud.default,
-                model=self._provider_model("cloud", self.config.providers.cloud.default),
-                reason="high-complexity tasks default to stronger remote models",
+                target="local",
+                provider=self.config.providers.local.default,
+                model=self._provider_model("local", self.config.providers.local.default),
+                reason="high-complexity tasks start local and rely on verification before escalation",
                 complexity=complexity,
                 verify=True,
             )

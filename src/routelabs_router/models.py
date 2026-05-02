@@ -48,6 +48,7 @@ class ChatCompletionResponse(BaseModel):
     choices: list[ChatCompletionChoice]
     usage: ChatCompletionUsage
     route: RouteDecision
+    trace: "DecisionTrace"
 
 
 class ProviderResult(BaseModel):
@@ -56,3 +57,20 @@ class ProviderResult(BaseModel):
     finish_reason: str = "stop"
     usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)
     raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class VerificationResult(BaseModel):
+    passed: bool
+    confidence: float
+    grounded: bool
+    hallucination_signals: list[str] = Field(default_factory=list)
+    reason: str
+    should_escalate: bool
+
+
+class DecisionTrace(BaseModel):
+    initial_route: RouteDecision
+    verification: VerificationResult | None = None
+    escalated: bool = False
+    escalation_reason: str | None = None
+    final_route: RouteDecision

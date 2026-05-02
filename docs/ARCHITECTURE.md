@@ -4,6 +4,10 @@
 
 `RouteLabs Router` is designed as a middleware layer between applications and inference providers.
 
+The stronger product framing is:
+
+`RouteLabs Router` is a local-first AI runtime with verification-aware escalation and cost visibility.
+
 The long-term system has five major responsibilities:
 
 - normalize requests
@@ -11,6 +15,14 @@ The long-term system has five major responsibilities:
 - inspect runtime availability and performance
 - execute verification-aware routing
 - emit decision telemetry
+
+The higher-level goals behind those responsibilities are:
+
+- answer locally first when feasible
+- verify before escalating
+- protect privacy by policy
+- explain every routing decision
+- measure cost and latency outcomes
 
 ## Logical flow
 
@@ -23,6 +35,13 @@ The long-term system has five major responsibilities:
 7. Verification may accept the result or trigger escalation.
 8. A decision trace is emitted for observability and benchmarking.
 
+The ideal future flow is:
+
+1. local model answers first
+2. verifier scores grounding, confidence, and hallucination risk
+3. escalation only happens if the verifier says the answer is weak
+4. traces and metrics capture why that happened
+
 ## Current implementation
 
 Today the repository supports:
@@ -31,12 +50,14 @@ Today the repository supports:
 - `/v1/chat/completions` for OpenAI-style chat requests
 - `Ollama` as the first real execution backend
 - generic OpenAI-compatible cloud execution
+- heuristic verification and escalation traces
 
 The current execution behavior is intentionally conservative but now genuinely hybrid:
 
 - local routes execute through `Ollama`
 - cloud routes execute through a generic OpenAI-compatible adapter when an API key is configured
-- cloud-routed requests return `501` with a clear configuration error when no cloud provider is configured
+- verification can escalate weak local responses to the cloud when configured
+- if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency
 
 ## Near-term implementation shape
@@ -70,6 +91,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 ## Design constraints
 
 - local-first by default
+- verification-aware escalation over naive complexity-only escalation
 - no hidden model switching
 - configuration must be understandable by developers
 - adapters should remain loosely coupled

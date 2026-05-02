@@ -12,11 +12,13 @@ from routelabs_router.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
+    DecisionTrace,
     ProviderResult,
     RouteDecision,
     RouteRequest,
 )
 from routelabs_router.router import RouterEngine
+from routelabs_router.verify import HeuristicVerifier
 
 
 class ChatService:
@@ -25,27 +27,54 @@ class ChatService:
         config: Config,
         router: RouterEngine | None = None,
         providers: dict[str, ChatProvider] | None = None,
+        verifier: HeuristicVerifier | None = None,
     ) -> None:
         self.config = config
         self.router = router or RouterEngine(config)
         self.providers = providers or self._default_providers()
+        self.verifier = verifier or HeuristicVerifier()
 
     def create_chat_completion(
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:
-        route = self.router.decide(
+        initial_route = self.router.decide(
             RouteRequest(task=_task_from_messages(request), private=request.private)
         )
+        trace = DecisionTrace(initial_route=initial_route, final_route=initial_route)
 
-        provider = self.providers.get(route.provider)
+        provider = self.providers.get(initial_route.provider)
         if provider is None:
             raise HTTPException(
                 status_code=501,
-                detail=f"provider '{route.provider}' is not configured",
+                detail=f"provider '{initial_route.provider}' is not configured",
             )
 
-        result = provider.complete(request, model=request.model or route.model)
-        return _build_chat_response(route, result)
+        result = provider.complete(request, model=request.model or initial_route.model)
+
+        if initial_route.verify:
+            verification = self.verifier.evaluate(
+                task=_task_from_messages(request),
+                complexity=initial_route.complexity,
+                result=result,
+            )
+            trace.verification = verification
+
+            if verification.should_escalate:
+                cloud_route = self._cloud_route(initial_route.complexity)
+                cloud_provider = self.providers.get(cloud_route.provider)
+                if cloud_provider is not None:
+                    trace.escalated = True
+                    trace.escalation_reason = verification.reason
+                    trace.final_route = cloud_route
+                    result = cloud_provider.complete(
+                        request, model=request.model or cloud_route.model
+                    )
+                else:
+                    trace.escalation_reason = (
+                        "verification requested escalation but no cloud provider is configured"
+                    )
+
+        return _build_chat_response(trace.final_route, result, trace)
 
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
@@ -55,6 +84,16 @@ class ChatService:
         if cloud_config.api_key:
             providers["openai-compatible"] = OpenAICompatibleChatAdapter(cloud_config)
         return providers
+
+    def _cloud_route(self, complexity: str) -> RouteDecision:
+        return RouteDecision(
+            target="cloud",
+            provider=self.config.providers.cloud.default,
+            model=self.config.providers.cloud.openai_compatible.model,
+            reason="verification requested escalation to a stronger remote model",
+            complexity=complexity,
+            verify=False,
+        )
 
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:
@@ -67,7 +106,7 @@ def _task_from_messages(request: ChatCompletionRequest) -> str:
 
 
 def _build_chat_response(
-    route: RouteDecision, result: ProviderResult
+    route: RouteDecision, result: ProviderResult, trace: DecisionTrace
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:24]}",
@@ -82,4 +121,5 @@ def _build_chat_response(
         ],
         usage=result.usage,
         route=route,
+        trace=trace,
     )

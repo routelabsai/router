@@ -25,5 +25,6 @@ def test_private_requests_prefer_local() -> None:
 def test_high_complexity_defaults_to_cloud() -> None:
     engine = RouterEngine(DEFAULT_CONFIG)
     decision = engine.decide(RouteRequest(task="design architecture for a multi-step system"))
-    assert decision.target == "cloud"
-    assert decision.provider == "openai-compatible"
+    assert decision.target == "local"
+    assert decision.provider == "ollama"
+    assert decision.verify is True

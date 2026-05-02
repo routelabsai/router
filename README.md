@@ -1,6 +1,6 @@
 # RouteLabs Router
 
-`RouteLabs Router` is a Python-first, local-first inference control plane for hybrid LLM systems.
+`RouteLabs Router` is a local-first AI runtime with verification-aware escalation and cost visibility.
 
 It gives applications one endpoint that can decide:
 
@@ -9,6 +9,7 @@ It gives applications one endpoint that can decide:
 - when privacy should override convenience
 - which provider and model should handle the request
 - why that decision was made
+- when verification forced an escalation
 
 The goal is simple: route each step to the cheapest, fastest, safest model that can still be trusted.
 
@@ -25,10 +26,14 @@ Most teams today have one of these problems:
 It is for teams who want:
 
 - one API for hybrid local + cloud inference
+- verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
+- cost and latency visibility
 - provider and model selection that can evolve over time
 - a foundation for agentic step-level routing later
+
+For the longer-term product thesis, see [docs/VISION.md](docs/VISION.md).
 
 ## What It Looks Like
 
@@ -84,6 +89,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 
 If `Ollama` is running locally, that request executes against your configured local model.
 If `OPENAI_API_KEY` is set, high-complexity requests can route through the configured OpenAI-compatible cloud provider.
+The response now includes a trace showing the initial route, verification result, and any escalation.
 
 It sits between applications and model runtimes, then decides whether a request should run on a local model or a cloud model based on:
 
@@ -94,27 +100,6 @@ It sits between applications and model runtimes, then decides whether a request 
 - runtime health
 - verification signals
 
-## Why this exists
-
-The current ecosystem has strong model runners and strong cloud gateways, but very few tools act as an intelligent middleware layer across both.
-
-Today you can find:
-
-- local runtimes like `Ollama`, `llama.cpp`, `LM Studio`, and `LocalAI`
-- training and export stacks like `Unsloth`
-- app shells like `AnythingLLM`, `Open WebUI`, and local desktop chat clients
-- cloud routing layers like `LiteLLM`, `OpenRouter`, and `Portkey`
-
-What is still missing is a policy-aware scheduler that:
-
-- routes between local and cloud models in real time
-- understands privacy and data handling rules
-- escalates only when verification fails or confidence is weak
-- reasons at the workflow-step level instead of only the full-query level
-- adapts to device constraints like memory, latency, and cache pressure
-
-That is the problem this project is designed to solve.
-
 ## Positioning
 
 | Tool | Core strength | What it does not solve |
@@ -122,7 +107,7 @@ That is the problem this project is designed to solve.
 | `Ollama` | Great local model runtime and API | Hybrid routing and policy decisions |
 | `LiteLLM` | Cloud API normalization and routing | Local-first execution strategy |
 | `OpenRouter` | Hosted provider access and fallback | On-device privacy-aware control plane |
-| `RouteLabs Router` | Policy-aware hybrid local/cloud routing | Early-stage policy and provider coverage |
+| `RouteLabs Router` | Verification-aware local-first runtime with hybrid routing | Early-stage policy and provider coverage |
 
 ## MVP scope
 
@@ -143,15 +128,6 @@ This repository intentionally starts small. It is a control-plane foundation, no
 - Browser or desktop assistants that need one middleware layer above multiple runtimes
 - Agent systems that want future step-level routing instead of a single fixed model
 
-## Initial architecture
-
-- `routerd`: local HTTP daemon built with `FastAPI`
-- `router`: CLI for config inspection and dry-run routing
-- `policy`: rule-based engine for privacy, complexity, and fallback decisions
-- `adapters`: runtime integrations such as `Ollama`, `llama.cpp`, `LM Studio`, and generic OpenAI-compatible endpoints
-- `verify`: response checks that can trigger escalation
-- `telemetry`: structured decision logging for benchmarking and future learning
-
 ## Current status
 
 This is an early but working scaffold. The repository already includes:
@@ -166,9 +142,24 @@ This is an early but working scaffold. The repository already includes:
 - OpenAI-style `/v1/chat/completions` endpoint
 - real local execution through `Ollama`
 - generic OpenAI-compatible cloud execution
+- first verification-aware escalation loop
 - test coverage for routing and API behavior
 - example config profiles
 - example curl flows
+
+What is still early:
+
+- verifiers are heuristic and still early
+- cost and latency dashboards are not implemented yet
+- privacy detection is still policy-driven rather than content-aware
+- learning from user corrections is still future work
+
+## More Docs
+
+- Product vision: [docs/VISION.md](docs/VISION.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Roadmap: [ROADMAP.md](ROADMAP.md)
+- Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Getting started
 
