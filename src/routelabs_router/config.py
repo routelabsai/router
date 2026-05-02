@@ -52,11 +52,21 @@ class PoliciesConfig(BaseModel):
     complexity: ComplexityPolicyConfig
 
 
+class TelemetryCostConfig(BaseModel):
+    local_request_cost_usd: float
+    cloud_request_cost_usd: float
+
+
+class TelemetryConfig(BaseModel):
+    costs: TelemetryCostConfig
+
+
 class Config(BaseModel):
     server: ServerConfig
     routing: RoutingConfig
     providers: ProvidersConfig
     policies: PoliciesConfig
+    telemetry: TelemetryConfig
 
 
 DEFAULT_CONFIG = Config.model_validate(
@@ -91,6 +101,12 @@ DEFAULT_CONFIG = Config.model_validate(
         "policies": {
             "privacy": {"deny_cloud_when_private": True},
             "complexity": {"local_max": "medium"},
+        },
+        "telemetry": {
+            "costs": {
+                "local_request_cost_usd": 0.0002,
+                "cloud_request_cost_usd": 0.02,
+            }
         },
     }
 )

@@ -46,6 +46,7 @@ Current status:
 - generic OpenAI-compatible cloud execution implemented
 - first verification-aware escalation loop implemented
 - initial stats endpoint implemented for local/cloud/escalation visibility
+- simple estimated cost savings implemented
 
 ## Phase 2: Verification and evaluation
 

@@ -52,6 +52,7 @@ Today the repository supports:
 - `Ollama` as the first real execution backend
 - generic OpenAI-compatible cloud execution
 - heuristic verification and escalation traces
+- simple estimated cost accounting
 
 The current execution behavior is intentionally conservative but now genuinely hybrid:
 
@@ -61,6 +62,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency
 - in-memory telemetry tracks local/cloud outcomes and escalation counts
+- telemetry also reports simple estimated savings against an all-cloud baseline
 
 ## Near-term implementation shape
 

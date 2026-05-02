@@ -195,3 +195,7 @@ def test_stats_endpoint_tracks_local_cloud_and_escalation_counts() -> None:
     assert stats["local_response_rate"] == 0.5
     assert stats["cloud_response_rate"] == 0.5
     assert stats["escalation_rate"] == 0.5
+    assert stats["estimated_total_cost_usd"] == 0.0202
+    assert stats["estimated_baseline_cloud_cost_usd"] == 0.04
+    assert stats["estimated_cost_saved_usd"] == 0.0198
+    assert stats["estimated_cloud_requests_avoided"] == 1

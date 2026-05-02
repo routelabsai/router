@@ -35,7 +35,7 @@ class ChatService:
         self.router = router or RouterEngine(config)
         self.providers = providers or self._default_providers()
         self.verifier = verifier or HeuristicVerifier()
-        self.telemetry = telemetry or InMemoryTelemetry()
+        self.telemetry = telemetry or InMemoryTelemetry(config.telemetry.costs)
 
     def create_chat_completion(
         self, request: ChatCompletionRequest

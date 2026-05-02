@@ -84,6 +84,10 @@ class RouterStats(BaseModel):
     verification_checks: int = 0
     verification_failures: int = 0
     private_requests: int = 0
+    estimated_total_cost_usd: float = 0.0
+    estimated_baseline_cloud_cost_usd: float = 0.0
+    estimated_cost_saved_usd: float = 0.0
+    estimated_cloud_requests_avoided: int = 0
 
     @property
     def local_response_rate(self) -> float:
@@ -110,6 +114,10 @@ class RouterStatsResponse(BaseModel):
     verification_checks: int
     verification_failures: int
     private_requests: int
+    estimated_total_cost_usd: float
+    estimated_baseline_cloud_cost_usd: float
+    estimated_cost_saved_usd: float
+    estimated_cloud_requests_avoided: int
     local_response_rate: float
     cloud_response_rate: float
     escalation_rate: float

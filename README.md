@@ -144,6 +144,7 @@ This is an early but working scaffold. The repository already includes:
 - generic OpenAI-compatible cloud execution
 - first verification-aware escalation loop
 - stats endpoint for local/cloud/escalation visibility
+- simple estimated cost savings in stats
 - test coverage for routing and API behavior
 - example config profiles
 - example curl flows
@@ -247,6 +248,13 @@ Stats endpoint:
 curl http://127.0.0.1:8000/v1/stats
 ```
 
+The stats response includes simple estimated fields such as:
+
+- `estimated_total_cost_usd`
+- `estimated_baseline_cloud_cost_usd`
+- `estimated_cost_saved_usd`
+- `estimated_cloud_requests_avoided`
+
 OpenAI-style chat completion:
 
 ```bash
@@ -261,6 +269,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 If `Ollama` is running locally, the chat endpoint will execute against your configured local model. If the router decides a task should go to the cloud, the API currently returns `501` until the first cloud adapter is added.
 If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return `501` with a clear configuration error.
 The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
+It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
 
 ### Run with Ollama
 

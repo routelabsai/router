@@ -28,3 +28,8 @@ policies:
     deny_cloud_when_private: true
   complexity:
     local_max: "medium"
+
+telemetry:
+  costs:
+    local_request_cost_usd: 0.0002
+    cloud_request_cost_usd: 0.02
