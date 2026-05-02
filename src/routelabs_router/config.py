@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import yaml
@@ -7,6 +8,8 @@ from pydantic import BaseModel
 class ProviderConfig(BaseModel):
     base_url: str
     model: str
+    api_key_env: str | None = None
+    api_key: str | None = None
 
 
 class LocalProvidersConfig(BaseModel):
@@ -81,6 +84,7 @@ DEFAULT_CONFIG = Config.model_validate(
                 "openai_compatible": {
                     "base_url": "https://api.openai.com/v1",
                     "model": "gpt-4.1-mini",
+                    "api_key_env": "OPENAI_API_KEY",
                 },
             },
         },
@@ -97,6 +101,7 @@ def load_config(path: str | Path) -> Config:
     with config_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     merged = _deep_merge(DEFAULT_CONFIG.model_dump(), raw)
+    _inject_provider_secrets(merged)
     return Config.model_validate(merged)
 
 
@@ -108,3 +113,16 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+def _inject_provider_secrets(config: dict) -> None:
+    cloud = config.get("providers", {}).get("cloud", {})
+    openai_compatible = cloud.get("openai_compatible")
+    if not isinstance(openai_compatible, dict):
+        return
+
+    env_name = openai_compatible.get("api_key_env")
+    if isinstance(env_name, str) and env_name:
+        api_key = os.getenv(env_name)
+        if api_key:
+            openai_compatible["api_key"] = api_key

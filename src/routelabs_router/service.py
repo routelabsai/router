@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from routelabs_router.adapters.base import ChatProvider
 from routelabs_router.adapters.ollama import OllamaChatAdapter
+from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import Config
 from routelabs_router.models import (
     ChatCompletionChoice,
@@ -43,22 +44,17 @@ class ChatService:
                 detail=f"provider '{route.provider}' is not configured",
             )
 
-        if route.target != "local":
-            raise HTTPException(
-                status_code=501,
-                detail=(
-                    "cloud execution is not implemented yet; "
-                    "configure or request a local-suitable task for now"
-                ),
-            )
-
         result = provider.complete(request, model=request.model or route.model)
         return _build_chat_response(route, result)
 
     def _default_providers(self) -> dict[str, ChatProvider]:
-        return {
+        providers: dict[str, ChatProvider] = {
             "ollama": OllamaChatAdapter(self.config.providers.local.ollama),
         }
+        cloud_config = self.config.providers.cloud.openai_compatible
+        if cloud_config.api_key:
+            providers["openai-compatible"] = OpenAICompatibleChatAdapter(cloud_config)
+        return providers
 
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:

@@ -83,6 +83,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 If `Ollama` is running locally, that request executes against your configured local model.
+If `OPENAI_API_KEY` is set, high-complexity requests can route through the configured OpenAI-compatible cloud provider.
 
 It sits between applications and model runtimes, then decides whether a request should run on a local model or a cloud model based on:
 
@@ -121,7 +122,7 @@ That is the problem this project is designed to solve.
 | `Ollama` | Great local model runtime and API | Hybrid routing and policy decisions |
 | `LiteLLM` | Cloud API normalization and routing | Local-first execution strategy |
 | `OpenRouter` | Hosted provider access and fallback | On-device privacy-aware control plane |
-| `RouteLabs Router` | Policy-aware hybrid local/cloud routing | Full cloud adapter coverage is still in progress |
+| `RouteLabs Router` | Policy-aware hybrid local/cloud routing | Early-stage policy and provider coverage |
 
 ## MVP scope
 
@@ -164,6 +165,7 @@ This is an early but working scaffold. The repository already includes:
 - route inspection endpoint
 - OpenAI-style `/v1/chat/completions` endpoint
 - real local execution through `Ollama`
+- generic OpenAI-compatible cloud execution
 - test coverage for routing and API behavior
 - example config profiles
 - example curl flows
@@ -183,6 +185,16 @@ conda activate routelabs-router
 python -m pip install --upgrade pip setuptools wheel
 pip install -e '.[dev]'
 ```
+
+### Configure cloud execution
+
+If you want cloud-routed requests to execute instead of returning a configuration error, set:
+
+```bash
+export OPENAI_API_KEY=your_api_key_here
+```
+
+The default cloud adapter uses the OpenAI-compatible endpoint configured in [`config/router.yaml`](config/router.yaml).
 
 ### Why `conda` is the recommended path
 
@@ -249,6 +261,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 If `Ollama` is running locally, the chat endpoint will execute against your configured local model. If the router decides a task should go to the cloud, the API currently returns `501` until the first cloud adapter is added.
+If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return `501` with a clear configuration error.
 
 ### Run with Ollama
 
@@ -261,6 +274,22 @@ uvicorn routelabs_router.server.app:app --reload
 ```
 
 The default local provider configuration lives in [`config/router.yaml`](config/router.yaml).
+
+### Hybrid mode example
+
+With both `Ollama` and `OPENAI_API_KEY` configured:
+
+- simple tasks usually run locally
+- private tasks prefer local execution
+- high-complexity tasks can route to the cloud
+
+Example cloud-leaning route check:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/route \
+  -H "Content-Type: application/json" \
+  -d '{"task":"design architecture for a multi-step agent","private":false}'
+```
 
 ### More examples
 

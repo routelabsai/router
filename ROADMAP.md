@@ -37,7 +37,7 @@ Current status:
 - route inspection endpoint implemented
 - `Ollama` local chat execution implemented
 - OpenAI-style `/v1/chat/completions` endpoint implemented
-- cloud execution still pending
+- generic OpenAI-compatible cloud execution implemented
 
 ## Phase 2: Verification and evaluation
 

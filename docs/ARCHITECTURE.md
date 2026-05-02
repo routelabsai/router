@@ -30,11 +30,13 @@ Today the repository supports:
 - `/v1/route` for route inspection
 - `/v1/chat/completions` for OpenAI-style chat requests
 - `Ollama` as the first real execution backend
+- generic OpenAI-compatible cloud execution
 
-The current execution behavior is intentionally conservative:
+The current execution behavior is intentionally conservative but now genuinely hybrid:
 
 - local routes execute through `Ollama`
-- cloud-routed requests return `501` until a cloud adapter is added
+- cloud routes execute through a generic OpenAI-compatible adapter when an API key is configured
+- cloud-routed requests return `501` with a clear configuration error when no cloud provider is configured
 - the routing decision is included in the chat response for transparency
 
 ## Near-term implementation shape

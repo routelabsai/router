@@ -5,6 +5,7 @@ These examples assume:
 - `conda activate routelabs-router`
 - `uvicorn routelabs_router.server.app:app --reload`
 - `Ollama` is running locally for live chat execution
+- `OPENAI_API_KEY` is optional for cloud-routed live execution
 
 ## 1. Health check
 
@@ -36,7 +37,8 @@ curl -X POST http://127.0.0.1:8000/v1/route \
 Expected behavior:
 
 - target should usually be `cloud`
-- current chat execution for cloud-routed tasks returns `501` until a cloud adapter is added
+- if `OPENAI_API_KEY` is configured, high-complexity chat execution can run through the cloud provider
+- otherwise chat execution returns `501` with a configuration error
 
 ## 4. Inspect a private task
 
@@ -62,3 +64,22 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 If `Ollama` is available, the request should return an assistant response and include the route metadata.
+
+## 6. Run a cloud-routed chat completion
+
+First:
+
+```bash
+export OPENAI_API_KEY=your_api_key_here
+```
+
+Then:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages":[{"role":"user","content":"Design architecture for a multi-step agent that routes private tasks locally and complex tasks to the cloud."}],
+    "private":false
+  }'
+```

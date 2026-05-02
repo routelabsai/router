@@ -21,6 +21,7 @@ providers:
     openai_compatible:
       base_url: "https://api.openai.com/v1"
       model: "gpt-4.1-mini"
+      api_key_env: "OPENAI_API_KEY"
 
 policies:
   privacy:
