@@ -282,6 +282,36 @@ logs = client.logs()
 
 There is also a runnable example in [`examples/python-client.py`](examples/python-client.py).
 
+### OpenAI-compatible drop-in example
+
+If you already use the OpenAI Python SDK, you can point it at RouteLabs:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="not-needed-for-local-dev",
+)
+
+response = client.chat.completions.create(
+    model="route-auto",
+    messages=[
+        {
+            "role": "user",
+            "content": "Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity.",
+        }
+    ],
+)
+```
+
+See [`examples/openai-compatible-client.py`](examples/openai-compatible-client.py).
+You may need to install the OpenAI SDK separately:
+
+```bash
+pip install openai
+```
+
 The stats response includes simple estimated fields such as:
 
 - `estimated_total_cost_usd`
