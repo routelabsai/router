@@ -74,3 +74,49 @@ class DecisionTrace(BaseModel):
     escalated: bool = False
     escalation_reason: str | None = None
     final_route: RouteDecision
+
+
+class RouterStats(BaseModel):
+    total_requests: int = 0
+    local_responses: int = 0
+    cloud_responses: int = 0
+    escalations: int = 0
+    verification_checks: int = 0
+    verification_failures: int = 0
+    private_requests: int = 0
+
+    @property
+    def local_response_rate(self) -> float:
+        return _safe_ratio(self.local_responses, self.total_requests)
+
+    @property
+    def cloud_response_rate(self) -> float:
+        return _safe_ratio(self.cloud_responses, self.total_requests)
+
+    @property
+    def escalation_rate(self) -> float:
+        return _safe_ratio(self.escalations, self.total_requests)
+
+    @property
+    def verification_failure_rate(self) -> float:
+        return _safe_ratio(self.verification_failures, self.verification_checks)
+
+
+class RouterStatsResponse(BaseModel):
+    total_requests: int
+    local_responses: int
+    cloud_responses: int
+    escalations: int
+    verification_checks: int
+    verification_failures: int
+    private_requests: int
+    local_response_rate: float
+    cloud_response_rate: float
+    escalation_rate: float
+    verification_failure_rate: float
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return round(numerator / denominator, 3)

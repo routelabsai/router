@@ -48,6 +48,7 @@ Today the repository supports:
 
 - `/v1/route` for route inspection
 - `/v1/chat/completions` for OpenAI-style chat requests
+- `/v1/stats` for simple routing telemetry
 - `Ollama` as the first real execution backend
 - generic OpenAI-compatible cloud execution
 - heuristic verification and escalation traces
@@ -59,6 +60,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - verification can escalate weak local responses to the cloud when configured
 - if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency
+- in-memory telemetry tracks local/cloud outcomes and escalation counts
 
 ## Near-term implementation shape
 

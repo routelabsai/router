@@ -18,6 +18,7 @@ from routelabs_router.models import (
     RouteRequest,
 )
 from routelabs_router.router import RouterEngine
+from routelabs_router.telemetry import InMemoryTelemetry
 from routelabs_router.verify import HeuristicVerifier
 
 
@@ -28,11 +29,13 @@ class ChatService:
         router: RouterEngine | None = None,
         providers: dict[str, ChatProvider] | None = None,
         verifier: HeuristicVerifier | None = None,
+        telemetry: InMemoryTelemetry | None = None,
     ) -> None:
         self.config = config
         self.router = router or RouterEngine(config)
         self.providers = providers or self._default_providers()
         self.verifier = verifier or HeuristicVerifier()
+        self.telemetry = telemetry or InMemoryTelemetry()
 
     def create_chat_completion(
         self, request: ChatCompletionRequest
@@ -74,7 +77,9 @@ class ChatService:
                         "verification requested escalation but no cloud provider is configured"
                     )
 
-        return _build_chat_response(trace.final_route, result, trace)
+        response = _build_chat_response(trace.final_route, result, trace)
+        self.telemetry.record(trace, is_private=request.private)
+        return response
 
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
@@ -94,6 +99,9 @@ class ChatService:
             complexity=complexity,
             verify=False,
         )
+
+    def get_stats(self):
+        return self.telemetry.snapshot()
 
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:

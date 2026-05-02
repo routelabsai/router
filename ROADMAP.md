@@ -45,6 +45,7 @@ Current status:
 - OpenAI-style `/v1/chat/completions` endpoint implemented
 - generic OpenAI-compatible cloud execution implemented
 - first verification-aware escalation loop implemented
+- initial stats endpoint implemented for local/cloud/escalation visibility
 
 ## Phase 2: Verification and evaluation
 

@@ -37,6 +37,25 @@ class WeakLocalProvider:
         )
 
 
+class MixedLocalProvider:
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        prompt = request.messages[-1].content.lower()
+        if "design architecture" in prompt or "multi-step" in prompt:
+            return ProviderResult(
+                content="I don't see enough information to answer confidently.",
+                model=model or "mixed-local-model",
+            )
+        return ProviderResult(
+            content=(
+                "RouteLabs Router is a local-first runtime that chooses between "
+                "local and cloud models using policy, verification, and privacy rules."
+            ),
+            model=model or "mixed-local-model",
+        )
+
+
 def test_route_endpoint_returns_provider_metadata() -> None:
     app = create_app()
     client = TestClient(app)
@@ -134,3 +153,45 @@ def test_chat_completions_returns_local_answer_with_trace_when_cloud_provider_is
     assert data["route"]["provider"] == "ollama"
     assert data["trace"]["escalated"] is False
     assert "no cloud provider is configured" in data["trace"]["escalation_reason"]
+
+
+def test_stats_endpoint_tracks_local_cloud_and_escalation_counts() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": MixedLocalProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "summarize this document"}],
+            "private": False,
+        },
+    )
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "design architecture for a multi-step agent",
+                }
+            ],
+            "private": False,
+        },
+    )
+    stats_response = client.get("/v1/stats")
+
+    assert stats_response.status_code == 200
+    stats = stats_response.json()
+    assert stats["total_requests"] == 2
+    assert stats["local_responses"] == 1
+    assert stats["cloud_responses"] == 1
+    assert stats["escalations"] == 1
+    assert stats["verification_checks"] == 2
+    assert stats["verification_failures"] == 1
+    assert stats["local_response_rate"] == 0.5
+    assert stats["cloud_response_rate"] == 0.5
+    assert stats["escalation_rate"] == 0.5

@@ -8,6 +8,7 @@ from routelabs_router.models import (
     ChatCompletionResponse,
     RouteDecision,
     RouteRequest,
+    RouterStatsResponse,
 )
 from routelabs_router.router import RouterEngine
 from routelabs_router.service import ChatService
@@ -33,6 +34,10 @@ def create_app(
     @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
     def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
         return chat_service.create_chat_completion(request)
+
+    @app.get("/v1/stats", response_model=RouterStatsResponse)
+    def stats() -> RouterStatsResponse:
+        return chat_service.get_stats()
 
     return app
 
