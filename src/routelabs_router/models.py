@@ -134,6 +134,21 @@ class PrivacyDetectionResult(BaseModel):
     forced_local: bool
 
 
+class RouteLogEntry(BaseModel):
+    request_id: str
+    task_preview: str
+    private: bool
+    auto_private: bool
+    estimated_request_cost_usd: float
+    estimated_baseline_cloud_cost_usd: float
+    estimated_cost_saved_usd: float
+    trace: DecisionTrace
+
+
+class RouteLogResponse(BaseModel):
+    entries: list[RouteLogEntry]
+
+
 def _safe_ratio(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0

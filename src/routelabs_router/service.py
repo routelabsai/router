@@ -43,6 +43,7 @@ class ChatService:
     def create_chat_completion(
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:
+        request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         task = _task_from_messages(request)
         privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
         effective_private = request.private or privacy.forced_local
@@ -85,9 +86,16 @@ class ChatService:
                         "verification requested escalation but no cloud provider is configured"
                     )
 
-        response = _build_chat_response(trace.final_route, result, trace)
+        response = _build_chat_response(
+            request_id=request_id,
+            route=trace.final_route,
+            result=result,
+            trace=trace,
+        )
         self.telemetry.record(
-            trace,
+            request_id=request_id,
+            task_preview=_task_preview(task),
+            trace=trace,
             is_private=effective_private,
             auto_private=privacy.detected and not request.private,
         )
@@ -115,6 +123,9 @@ class ChatService:
     def get_stats(self):
         return self.telemetry.snapshot()
 
+    def get_recent_logs(self):
+        return self.telemetry.recent_logs()
+
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:
     user_messages = [
@@ -126,10 +137,13 @@ def _task_from_messages(request: ChatCompletionRequest) -> str:
 
 
 def _build_chat_response(
-    route: RouteDecision, result: ProviderResult, trace: DecisionTrace
+    request_id: str,
+    route: RouteDecision,
+    result: ProviderResult,
+    trace: DecisionTrace,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
-        id=f"chatcmpl-{uuid.uuid4().hex[:24]}",
+        id=request_id,
         created=int(time.time()),
         model=result.model,
         choices=[
@@ -143,3 +157,10 @@ def _build_chat_response(
         route=route,
         trace=trace,
     )
+
+
+def _task_preview(task: str, limit: int = 120) -> str:
+    compact = " ".join(task.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."

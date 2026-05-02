@@ -1,34 +1,49 @@
+from collections import deque
 from threading import Lock
 
 from routelabs_router.config import TelemetryCostConfig
-from routelabs_router.models import DecisionTrace, RouterStats, RouterStatsResponse
+from routelabs_router.models import (
+    DecisionTrace,
+    RouteLogEntry,
+    RouteLogResponse,
+    RouterStats,
+    RouterStatsResponse,
+)
 
 
 class InMemoryTelemetry:
-    def __init__(self, costs: TelemetryCostConfig) -> None:
+    def __init__(self, costs: TelemetryCostConfig, max_log_entries: int = 100) -> None:
         self._stats = RouterStats()
         self._costs = costs
         self._lock = Lock()
+        self._logs: deque[RouteLogEntry] = deque(maxlen=max_log_entries)
 
-    def record(self, trace: DecisionTrace, is_private: bool, auto_private: bool) -> None:
+    def record(
+        self,
+        request_id: str,
+        task_preview: str,
+        trace: DecisionTrace,
+        is_private: bool,
+        auto_private: bool,
+    ) -> None:
         with self._lock:
             self._stats.total_requests += 1
+            baseline_cloud_cost = self._costs.cloud_request_cost_usd
             self._stats.estimated_baseline_cloud_cost_usd = _round_cost(
-                self._stats.estimated_baseline_cloud_cost_usd
-                + self._costs.cloud_request_cost_usd
+                self._stats.estimated_baseline_cloud_cost_usd + baseline_cloud_cost
             )
             if trace.final_route.target == "local":
                 self._stats.local_responses += 1
+                request_cost = self._costs.local_request_cost_usd
                 self._stats.estimated_total_cost_usd = _round_cost(
-                    self._stats.estimated_total_cost_usd
-                    + self._costs.local_request_cost_usd
+                    self._stats.estimated_total_cost_usd + request_cost
                 )
                 self._stats.estimated_cloud_requests_avoided += 1
             else:
                 self._stats.cloud_responses += 1
+                request_cost = self._costs.cloud_request_cost_usd
                 self._stats.estimated_total_cost_usd = _round_cost(
-                    self._stats.estimated_total_cost_usd
-                    + self._costs.cloud_request_cost_usd
+                    self._stats.estimated_total_cost_usd + request_cost
                 )
 
             if trace.escalated:
@@ -47,6 +62,20 @@ class InMemoryTelemetry:
             self._stats.estimated_cost_saved_usd = _round_cost(
                 self._stats.estimated_baseline_cloud_cost_usd
                 - self._stats.estimated_total_cost_usd
+            )
+            self._logs.appendleft(
+                RouteLogEntry(
+                    request_id=request_id,
+                    task_preview=task_preview,
+                    private=is_private,
+                    auto_private=auto_private,
+                    estimated_request_cost_usd=_round_cost(request_cost),
+                    estimated_baseline_cloud_cost_usd=_round_cost(baseline_cloud_cost),
+                    estimated_cost_saved_usd=_round_cost(
+                        baseline_cloud_cost - request_cost
+                    ),
+                    trace=trace,
+                )
             )
 
     def snapshot(self) -> RouterStatsResponse:
@@ -70,6 +99,10 @@ class InMemoryTelemetry:
                 escalation_rate=stats.escalation_rate,
                 verification_failure_rate=stats.verification_failure_rate,
             )
+
+    def recent_logs(self) -> RouteLogResponse:
+        with self._lock:
+            return RouteLogResponse(entries=list(self._logs))
 
 
 def _round_cost(value: float) -> float:

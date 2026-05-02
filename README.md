@@ -148,6 +148,7 @@ This is an early but working scaffold. The repository already includes:
 - stats endpoint for local/cloud/escalation visibility
 - simple estimated cost savings in stats
 - heuristic privacy detection for email/identifier/code-like content
+- recent route logs for per-request inspection
 - test coverage for routing and API behavior
 - example config profiles
 - example curl flows
@@ -251,6 +252,12 @@ Stats endpoint:
 curl http://127.0.0.1:8000/v1/stats
 ```
 
+Recent route logs:
+
+```bash
+curl http://127.0.0.1:8000/v1/logs
+```
+
 The stats response includes simple estimated fields such as:
 
 - `estimated_total_cost_usd`
@@ -273,6 +280,7 @@ If `Ollama` is running locally, the chat endpoint will execute against your conf
 If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return `501` with a clear configuration error.
 The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
 It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
+The logs endpoint exposes recent request-level decisions so users can inspect privacy detection, verification, escalation, final route choice, and estimated per-request cost directly.
 
 ### Privacy-aware behavior
 

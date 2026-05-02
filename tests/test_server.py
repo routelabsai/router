@@ -287,3 +287,51 @@ def test_stats_endpoint_tracks_auto_private_requests() -> None:
     stats = stats_response.json()
     assert stats["private_requests"] == 1
     assert stats["auto_private_requests"] == 1
+
+
+def test_logs_endpoint_returns_recent_route_entries() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": MixedLocalProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Contact alice@example.com about this release note.",
+                }
+            ],
+            "private": False,
+        },
+    )
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "design architecture for a multi-step agent",
+                }
+            ],
+            "private": False,
+        },
+    )
+
+    logs_response = client.get("/v1/logs")
+
+    assert logs_response.status_code == 200
+    entries = logs_response.json()["entries"]
+    assert len(entries) == 2
+    latest = entries[0]
+    earlier = entries[1]
+    assert latest["trace"]["final_route"]["provider"] in {"ollama", "openai-compatible"}
+    assert "request_id" in latest
+    assert "estimated_request_cost_usd" in latest
+    assert "task_preview" in latest
+    assert earlier["trace"]["privacy"]["detected"] is True

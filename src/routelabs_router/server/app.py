@@ -6,6 +6,7 @@ from routelabs_router.config import load_config
 from routelabs_router.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
+    RouteLogResponse,
     RouteDecision,
     RouteRequest,
     RouterStatsResponse,
@@ -38,6 +39,10 @@ def create_app(
     @app.get("/v1/stats", response_model=RouterStatsResponse)
     def stats() -> RouterStatsResponse:
         return chat_service.get_stats()
+
+    @app.get("/v1/logs", response_model=RouteLogResponse)
+    def logs() -> RouteLogResponse:
+        return chat_service.get_recent_logs()
 
     return app
 

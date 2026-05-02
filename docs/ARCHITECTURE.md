@@ -49,6 +49,7 @@ Today the repository supports:
 - `/v1/route` for route inspection
 - `/v1/chat/completions` for OpenAI-style chat requests
 - `/v1/stats` for simple routing telemetry
+- `/v1/logs` for recent request-level route logs
 - `Ollama` as the first real execution backend
 - generic OpenAI-compatible cloud execution
 - heuristic verification and escalation traces
@@ -65,6 +66,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - in-memory telemetry tracks local/cloud outcomes and escalation counts
 - telemetry also reports simple estimated savings against an all-cloud baseline
 - heuristic privacy detection can force local execution for obvious sensitive or code-like content
+- recent route logs expose per-request trace data for debugging and trust
 
 ## Near-term implementation shape
 

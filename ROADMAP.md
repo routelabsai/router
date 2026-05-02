@@ -48,6 +48,7 @@ Current status:
 - initial stats endpoint implemented for local/cloud/escalation visibility
 - simple estimated cost savings implemented
 - heuristic privacy-aware local preference implemented
+- recent request-level logs implemented
 
 ## Phase 2: Verification and evaluation
 
