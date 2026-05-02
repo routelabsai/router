@@ -258,6 +258,30 @@ Recent route logs:
 curl http://127.0.0.1:8000/v1/logs
 ```
 
+### Python client
+
+You can also call the router from Python:
+
+```python
+from routelabs_router import RouteLabsClient
+
+client = RouteLabsClient("http://127.0.0.1:8000")
+
+route = client.route("Summarize a short product description")
+chat = client.chat(
+    [
+        {
+            "role": "user",
+            "content": "Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity.",
+        }
+    ]
+)
+stats = client.stats()
+logs = client.logs()
+```
+
+There is also a runnable example in [`examples/python-client.py`](examples/python-client.py).
+
 The stats response includes simple estimated fields such as:
 
 - `estimated_total_cost_usd`
