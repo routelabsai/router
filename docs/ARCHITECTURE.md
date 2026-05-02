@@ -53,6 +53,7 @@ Today the repository supports:
 - generic OpenAI-compatible cloud execution
 - heuristic verification and escalation traces
 - simple estimated cost accounting
+- heuristic privacy detection
 
 The current execution behavior is intentionally conservative but now genuinely hybrid:
 
@@ -63,6 +64,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - the routing decision is included in the chat response for transparency
 - in-memory telemetry tracks local/cloud outcomes and escalation counts
 - telemetry also reports simple estimated savings against an all-cloud baseline
+- heuristic privacy detection can force local execution for obvious sensitive or code-like content
 
 ## Near-term implementation shape
 

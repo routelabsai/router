@@ -69,6 +69,7 @@ class VerificationResult(BaseModel):
 
 
 class DecisionTrace(BaseModel):
+    privacy: "PrivacyDetectionResult | None" = None
     initial_route: RouteDecision
     verification: VerificationResult | None = None
     escalated: bool = False
@@ -84,6 +85,7 @@ class RouterStats(BaseModel):
     verification_checks: int = 0
     verification_failures: int = 0
     private_requests: int = 0
+    auto_private_requests: int = 0
     estimated_total_cost_usd: float = 0.0
     estimated_baseline_cloud_cost_usd: float = 0.0
     estimated_cost_saved_usd: float = 0.0
@@ -114,6 +116,7 @@ class RouterStatsResponse(BaseModel):
     verification_checks: int
     verification_failures: int
     private_requests: int
+    auto_private_requests: int
     estimated_total_cost_usd: float
     estimated_baseline_cloud_cost_usd: float
     estimated_cost_saved_usd: float
@@ -122,6 +125,13 @@ class RouterStatsResponse(BaseModel):
     cloud_response_rate: float
     escalation_rate: float
     verification_failure_rate: float
+
+
+class PrivacyDetectionResult(BaseModel):
+    detected: bool
+    categories: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    forced_local: bool
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:

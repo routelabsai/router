@@ -17,6 +17,7 @@ from routelabs_router.models import (
     RouteDecision,
     RouteRequest,
 )
+from routelabs_router.privacy import HeuristicPrivacyDetector
 from routelabs_router.router import RouterEngine
 from routelabs_router.telemetry import InMemoryTelemetry
 from routelabs_router.verify import HeuristicVerifier
@@ -30,20 +31,27 @@ class ChatService:
         providers: dict[str, ChatProvider] | None = None,
         verifier: HeuristicVerifier | None = None,
         telemetry: InMemoryTelemetry | None = None,
+        privacy_detector: HeuristicPrivacyDetector | None = None,
     ) -> None:
         self.config = config
         self.router = router or RouterEngine(config)
         self.providers = providers or self._default_providers()
         self.verifier = verifier or HeuristicVerifier()
         self.telemetry = telemetry or InMemoryTelemetry(config.telemetry.costs)
+        self.privacy_detector = privacy_detector or HeuristicPrivacyDetector()
 
     def create_chat_completion(
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:
+        task = _task_from_messages(request)
+        privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
+        effective_private = request.private or privacy.forced_local
         initial_route = self.router.decide(
-            RouteRequest(task=_task_from_messages(request), private=request.private)
+            RouteRequest(task=task, private=effective_private)
         )
-        trace = DecisionTrace(initial_route=initial_route, final_route=initial_route)
+        trace = DecisionTrace(
+            privacy=privacy, initial_route=initial_route, final_route=initial_route
+        )
 
         provider = self.providers.get(initial_route.provider)
         if provider is None:
@@ -56,7 +64,7 @@ class ChatService:
 
         if initial_route.verify:
             verification = self.verifier.evaluate(
-                task=_task_from_messages(request),
+                task=task,
                 complexity=initial_route.complexity,
                 result=result,
             )
@@ -78,7 +86,11 @@ class ChatService:
                     )
 
         response = _build_chat_response(trace.final_route, result, trace)
-        self.telemetry.record(trace, is_private=request.private)
+        self.telemetry.record(
+            trace,
+            is_private=effective_private,
+            auto_private=privacy.detected and not request.private,
+        )
         return response
 
     def _default_providers(self) -> dict[str, ChatProvider]:

@@ -10,6 +10,7 @@ It gives applications one endpoint that can decide:
 - which provider and model should handle the request
 - why that decision was made
 - when verification forced an escalation
+- when privacy detection forced local execution
 
 The goal is simple: route each step to the cheapest, fastest, safest model that can still be trusted.
 
@@ -29,6 +30,7 @@ It is for teams who want:
 - verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
+- automatic local preference for obvious sensitive or code-like content
 - cost and latency visibility
 - provider and model selection that can evolve over time
 - a foundation for agentic step-level routing later
@@ -145,6 +147,7 @@ This is an early but working scaffold. The repository already includes:
 - first verification-aware escalation loop
 - stats endpoint for local/cloud/escalation visibility
 - simple estimated cost savings in stats
+- heuristic privacy detection for email/identifier/code-like content
 - test coverage for routing and API behavior
 - example config profiles
 - example curl flows
@@ -153,7 +156,7 @@ What is still early:
 
 - verifiers are heuristic and still early
 - cost and latency dashboards are not implemented yet
-- privacy detection is still policy-driven rather than content-aware
+- privacy detection is heuristic rather than model-based
 - learning from user corrections is still future work
 
 ## More Docs
@@ -270,6 +273,18 @@ If `Ollama` is running locally, the chat endpoint will execute against your conf
 If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return `501` with a clear configuration error.
 The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
 It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
+
+### Privacy-aware behavior
+
+The router can now automatically prefer local execution for requests that look like:
+
+- emails or phone-like identifiers
+- SSN-like or account-like identifiers
+- secret-like tokens
+- code-like content
+
+This first version uses lightweight heuristics so it is easy to run locally.
+For a more advanced future detector, the project can integrate a model such as `openai/privacy-filter`.
 
 ### Run with Ollama
 

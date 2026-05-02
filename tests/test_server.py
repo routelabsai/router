@@ -155,6 +155,64 @@ def test_chat_completions_returns_local_answer_with_trace_when_cloud_provider_is
     assert "no cloud provider is configured" in data["trace"]["escalation_reason"]
 
 
+def test_chat_completions_auto_force_local_for_email_like_content() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Email alice@example.com and summarize the customer update.",
+                }
+            ],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "ollama"
+    assert data["trace"]["privacy"]["detected"] is True
+    assert "private_email" in data["trace"]["privacy"]["categories"]
+
+
+def test_chat_completions_auto_force_local_for_code_like_content() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "def fix_bug(x):\n    import os\n    return x + 1",
+                }
+            ],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "ollama"
+    assert data["trace"]["privacy"]["detected"] is True
+    assert "code" in data["trace"]["privacy"]["categories"]
+
+
 def test_stats_endpoint_tracks_local_cloud_and_escalation_counts() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
@@ -192,6 +250,7 @@ def test_stats_endpoint_tracks_local_cloud_and_escalation_counts() -> None:
     assert stats["escalations"] == 1
     assert stats["verification_checks"] == 2
     assert stats["verification_failures"] == 1
+    assert stats["auto_private_requests"] == 0
     assert stats["local_response_rate"] == 0.5
     assert stats["cloud_response_rate"] == 0.5
     assert stats["escalation_rate"] == 0.5
@@ -199,3 +258,32 @@ def test_stats_endpoint_tracks_local_cloud_and_escalation_counts() -> None:
     assert stats["estimated_baseline_cloud_cost_usd"] == 0.04
     assert stats["estimated_cost_saved_usd"] == 0.0198
     assert stats["estimated_cloud_requests_avoided"] == 1
+
+
+def test_stats_endpoint_tracks_auto_private_requests() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Contact me at alice@example.com about this project update.",
+                }
+            ],
+            "private": False,
+        },
+    )
+    stats_response = client.get("/v1/stats")
+
+    assert stats_response.status_code == 200
+    stats = stats_response.json()
+    assert stats["private_requests"] == 1
+    assert stats["auto_private_requests"] == 1

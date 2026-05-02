@@ -10,7 +10,7 @@ class InMemoryTelemetry:
         self._costs = costs
         self._lock = Lock()
 
-    def record(self, trace: DecisionTrace, is_private: bool) -> None:
+    def record(self, trace: DecisionTrace, is_private: bool, auto_private: bool) -> None:
         with self._lock:
             self._stats.total_requests += 1
             self._stats.estimated_baseline_cloud_cost_usd = _round_cost(
@@ -41,6 +41,8 @@ class InMemoryTelemetry:
 
             if is_private:
                 self._stats.private_requests += 1
+            if auto_private:
+                self._stats.auto_private_requests += 1
 
             self._stats.estimated_cost_saved_usd = _round_cost(
                 self._stats.estimated_baseline_cloud_cost_usd
@@ -58,6 +60,7 @@ class InMemoryTelemetry:
                 verification_checks=stats.verification_checks,
                 verification_failures=stats.verification_failures,
                 private_requests=stats.private_requests,
+                auto_private_requests=stats.auto_private_requests,
                 estimated_total_cost_usd=stats.estimated_total_cost_usd,
                 estimated_baseline_cloud_cost_usd=stats.estimated_baseline_cloud_cost_usd,
                 estimated_cost_saved_usd=stats.estimated_cost_saved_usd,

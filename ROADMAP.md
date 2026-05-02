@@ -47,6 +47,7 @@ Current status:
 - first verification-aware escalation loop implemented
 - initial stats endpoint implemented for local/cloud/escalation visibility
 - simple estimated cost savings implemented
+- heuristic privacy-aware local preference implemented
 
 ## Phase 2: Verification and evaluation
 
@@ -77,6 +78,7 @@ Current status:
   - PII-sensitive tasks stay local
   - codebase and internal-document tasks prefer local
   - generic tasks may use cloud when justified
+- stronger privacy detection integrations, including model-based detectors where appropriate
 - step-level policies for:
   - retrieval
   - planning
