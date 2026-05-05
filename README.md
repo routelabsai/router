@@ -1,5 +1,9 @@
 # RouteLabs Router
 
+[![PyPI version](https://img.shields.io/pypi/v/routelabs-router.svg)](https://pypi.org/project/routelabs-router/)
+[![Python versions](https://img.shields.io/pypi/pyversions/routelabs-router.svg)](https://pypi.org/project/routelabs-router/)
+[![Publish to PyPI](https://github.com/routelabsai/router/actions/workflows/publish.yml/badge.svg)](https://github.com/routelabsai/router/actions/workflows/publish.yml)
+
 `RouteLabs Router` is a local-first runtime that sits between your app and local/cloud LLMs.
 
 It gives applications one endpoint that can decide:
