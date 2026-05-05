@@ -3,7 +3,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from routelabs_router.adapters.base import ChatProvider
+from routelabs_router.adapters.base import ChatProvider, ProviderExecutionError
 from routelabs_router.adapters.ollama import OllamaChatAdapter
 from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import Config
@@ -13,7 +13,10 @@ from routelabs_router.models import (
     ChatCompletionResponse,
     ChatMessage,
     DecisionTrace,
+    ModelCard,
+    ModelsListResponse,
     ProviderResult,
+    ProviderAttempt,
     RouteDecision,
     RouteRequest,
 )
@@ -53,17 +56,16 @@ class ChatService:
         trace = DecisionTrace(
             privacy=privacy, initial_route=initial_route, final_route=initial_route
         )
+        requested_model = _requested_model_override(request.model)
+        result = self._execute_route_or_fallback(
+            request=request,
+            route=initial_route,
+            trace=trace,
+            requested_model=requested_model,
+            allow_cross_target_fallback=not effective_private,
+        )
 
-        provider = self.providers.get(initial_route.provider)
-        if provider is None:
-            raise HTTPException(
-                status_code=501,
-                detail=f"provider '{initial_route.provider}' is not configured",
-            )
-
-        result = provider.complete(request, model=request.model or initial_route.model)
-
-        if initial_route.verify:
+        if initial_route.verify and trace.final_route.target == "local":
             verification = self.verifier.evaluate(
                 task=task,
                 complexity=initial_route.complexity,
@@ -73,17 +75,21 @@ class ChatService:
 
             if verification.should_escalate:
                 cloud_route = self._cloud_route(initial_route.complexity)
-                cloud_provider = self.providers.get(cloud_route.provider)
-                if cloud_provider is not None:
-                    trace.escalated = True
-                    trace.escalation_reason = verification.reason
-                    trace.final_route = cloud_route
-                    result = cloud_provider.complete(
-                        request, model=request.model or cloud_route.model
+                trace.escalated = True
+                trace.escalation_reason = verification.reason
+                try:
+                    result = self._execute_route(
+                        request=request,
+                        route=cloud_route,
+                        trace=trace,
+                        requested_model=requested_model,
                     )
-                else:
+                    trace.final_route = cloud_route
+                except HTTPException as exc:
+                    trace.escalated = False
                     trace.escalation_reason = (
-                        "verification requested escalation but no cloud provider is configured"
+                        "verification requested escalation but the cloud route failed: "
+                        f"{exc.detail}"
                     )
 
         response = _build_chat_response(
@@ -100,6 +106,31 @@ class ChatService:
             auto_private=privacy.detected and not request.private,
         )
         return response
+
+    def list_models(self) -> ModelsListResponse:
+        models = [
+            ModelCard(id="route-auto", owned_by="routelabs"),
+            ModelCard(
+                id=self.config.providers.local.ollama.model,
+                owned_by="routelabs-local",
+            ),
+            ModelCard(
+                id=self.config.providers.local.llamacpp.model,
+                owned_by="routelabs-local",
+            ),
+            ModelCard(
+                id=self.config.providers.cloud.openai_compatible.model,
+                owned_by="routelabs-cloud",
+            ),
+        ]
+        deduped: list[ModelCard] = []
+        seen: set[str] = set()
+        for model in models:
+            if model.id in seen:
+                continue
+            seen.add(model.id)
+            deduped.append(model)
+        return ModelsListResponse(data=deduped)
 
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
@@ -125,6 +156,92 @@ class ChatService:
 
     def get_recent_logs(self):
         return self.telemetry.recent_logs()
+
+    def _execute_route_or_fallback(
+        self,
+        request: ChatCompletionRequest,
+        route: RouteDecision,
+        trace: DecisionTrace,
+        requested_model: str | None,
+        allow_cross_target_fallback: bool,
+    ) -> ProviderResult:
+        try:
+            return self._execute_route(
+                request=request,
+                route=route,
+                trace=trace,
+                requested_model=requested_model,
+            )
+        except HTTPException as exc:
+            if not allow_cross_target_fallback or route.target != "local":
+                raise exc
+            fallback_route = self._cloud_route(route.complexity)
+            trace.escalated = True
+            trace.escalation_reason = "local provider was unavailable, falling back to cloud"
+            trace.final_route = fallback_route
+            return self._execute_route(
+                request=request,
+                route=fallback_route,
+                trace=trace,
+                requested_model=requested_model,
+            )
+
+    def _execute_route(
+        self,
+        request: ChatCompletionRequest,
+        route: RouteDecision,
+        trace: DecisionTrace,
+        requested_model: str | None,
+    ) -> ProviderResult:
+        provider = self.providers.get(route.provider)
+        if provider is None:
+            raise HTTPException(
+                status_code=501,
+                detail=f"provider '{route.provider}' is not configured",
+            )
+
+        model_name = requested_model or route.model
+        retries = max(1, self._provider_retries(route.provider))
+        last_error: str | None = None
+        for attempt_number in range(1, retries + 1):
+            try:
+                result = provider.complete(request, model=model_name)
+                trace.attempts.append(
+                    ProviderAttempt(
+                        provider=route.provider,
+                        model=result.model,
+                        target=route.target,
+                        outcome="success",
+                        reason=f"attempt {attempt_number}",
+                    )
+                )
+                return result
+            except ProviderExecutionError as exc:
+                last_error = exc.reason
+                trace.attempts.append(
+                    ProviderAttempt(
+                        provider=route.provider,
+                        model=model_name,
+                        target=route.target,
+                        outcome="failure",
+                        reason=f"attempt {attempt_number}: {exc.reason}",
+                    )
+                )
+
+        status_code = 502 if route.target == "cloud" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"{route.provider} failed after {retries} attempt(s): {last_error or 'unknown error'}",
+        )
+
+    def _provider_retries(self, provider_name: str) -> int:
+        if provider_name == "ollama":
+            return self.config.providers.local.ollama.max_retries
+        if provider_name == "llamacpp":
+            return self.config.providers.local.llamacpp.max_retries
+        if provider_name == "openai-compatible":
+            return self.config.providers.cloud.openai_compatible.max_retries
+        return 1
 
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:
@@ -164,3 +281,11 @@ def _task_preview(task: str, limit: int = 120) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
+
+
+def _requested_model_override(model: str | None) -> str | None:
+    if model is None:
+        return None
+    if model in {"route-auto", "auto"}:
+        return None
+    return model

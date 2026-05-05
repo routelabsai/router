@@ -1,6 +1,6 @@
 server:
   host: "127.0.0.1"
-  port: 8787
+  port: 8000
 
 routing:
   default_mode: "balanced"
@@ -13,15 +13,21 @@ providers:
     ollama:
       base_url: "http://127.0.0.1:11434"
       model: "qwen3:4b"
+      timeout_seconds: 60
+      max_retries: 2
     llamacpp:
       base_url: "http://127.0.0.1:8080"
       model: "qwen3-4b-instruct"
+      timeout_seconds: 60
+      max_retries: 1
   cloud:
     default: "openai-compatible"
     openai_compatible:
       base_url: "https://api.openai.com/v1"
       model: "gpt-4.1-mini"
       api_key_env: "OPENAI_API_KEY"
+      timeout_seconds: 60
+      max_retries: 2
 
 policies:
   privacy:

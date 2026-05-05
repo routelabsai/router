@@ -99,10 +99,12 @@ Most teams today have one of these problems:
 It is for teams who want:
 
 - one API for hybrid local + cloud inference
+- OpenAI-compatible model discovery for existing SDKs and UIs
 - verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
 - automatic local preference for obvious sensitive or code-like content
+- automatic local-to-cloud fallback when a provider is unavailable
 - cost and latency visibility
 - provider and model selection that can evolve over time
 - a foundation for agentic step-level routing later
@@ -137,6 +139,7 @@ print(client.route("Summarize a short product description"))
 ### 3. As an OpenAI-compatible endpoint
 
 If you already have code using an OpenAI-style client, point it at RouteLabs via `base_url`.
+Use `model="route-auto"` when you want RouteLabs to choose the concrete backend model for each request.
 
 That is one of the easiest ways to adopt it without rewriting your app.
 
@@ -243,9 +246,11 @@ This is an early but usable product foundation. The repository already includes:
 - YAML config loading
 - route inspection endpoint
 - OpenAI-style `/v1/chat/completions` endpoint
+- OpenAI-compatible `/v1/models` discovery endpoint
 - real local execution through `Ollama`
 - generic OpenAI-compatible cloud execution
 - first verification-aware escalation loop
+- automatic fallback from local provider failures to the cloud when policy allows it
 - stats endpoint for local/cloud/escalation visibility
 - simple estimated cost savings in stats
 - heuristic privacy detection for email/identifier/code-like content
@@ -380,6 +385,12 @@ Recent route logs:
 curl http://127.0.0.1:8000/v1/logs
 ```
 
+Model discovery:
+
+```bash
+curl http://127.0.0.1:8000/v1/models
+```
+
 ### Python client
 
 You can also call the router from Python:
@@ -454,9 +465,23 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 
 If `Ollama` is running locally, the chat endpoint will execute against your configured local model.
 If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return a clear configuration error.
+If the local provider is unavailable and the request is not forced to stay private, RouteLabs can now fall back to the cloud automatically and record that decision in the trace.
 The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
 It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
 The logs endpoint exposes recent request-level decisions so users can inspect privacy detection, verification, escalation, final route choice, and estimated per-request cost directly.
+
+### Existing tool compatibility
+
+RouteLabs now exposes the two OpenAI-style endpoints many existing tools check first:
+
+- `/v1/chat/completions`
+- `/v1/models`
+
+That makes it easier to place RouteLabs in front of:
+
+- OpenAI Python SDK clients
+- LangChain `ChatOpenAI` clients configured with `base_url`
+- Open WebUI connections that validate providers through `/models`
 
 ### Privacy-aware behavior
 

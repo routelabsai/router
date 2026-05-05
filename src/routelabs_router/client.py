@@ -39,6 +39,9 @@ class RouteLabsClient:
     def logs(self) -> dict[str, Any]:
         return self._request("GET", "/v1/logs")
 
+    def models(self) -> dict[str, Any]:
+        return self._request("GET", "/v1/models")
+
     def health(self) -> dict[str, Any]:
         return self._request("GET", "/healthz")
 

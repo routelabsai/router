@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import DEFAULT_CONFIG
 from routelabs_router.models import ChatCompletionRequest, ProviderResult
 from routelabs_router.router import RouterEngine
@@ -35,6 +36,13 @@ class WeakLocalProvider:
             content="I don't see any document or enough information to answer confidently.",
             model=model or "weak-local-model",
         )
+
+
+class FailingLocalProvider:
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        raise ProviderExecutionError("ollama", "connection refused")
 
 
 class MixedLocalProvider:
@@ -95,6 +103,48 @@ def test_chat_completions_uses_local_provider() -> None:
     assert data["trace"]["escalated"] is False
 
 
+def test_models_endpoint_lists_route_auto_and_configured_models() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    model_ids = {item["id"] for item in response.json()["data"]}
+    assert "route-auto" in model_ids
+    assert DEFAULT_CONFIG.providers.local.ollama.model in model_ids
+    assert DEFAULT_CONFIG.providers.cloud.openai_compatible.model in model_ids
+
+
+def test_chat_completions_treats_route_auto_as_router_selected_model() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "route-auto",
+            "messages": [{"role": "user", "content": "summarize this document"}],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["model"] == DEFAULT_CONFIG.providers.local.ollama.model
+    assert data["trace"]["attempts"][0]["outcome"] == "success"
+
+
 def test_chat_completions_uses_cloud_provider_for_high_complexity_tasks() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
@@ -126,6 +176,33 @@ def test_chat_completions_uses_cloud_provider_for_high_complexity_tasks() -> Non
     assert data["trace"]["verification"]["should_escalate"] is True
 
 
+def test_chat_completions_falls_back_to_cloud_when_local_provider_fails() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FailingLocalProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "route-auto",
+            "messages": [{"role": "user", "content": "summarize this document"}],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "openai-compatible"
+    assert data["trace"]["escalated"] is True
+    assert "falling back to cloud" in data["trace"]["escalation_reason"]
+    assert data["trace"]["attempts"][0]["outcome"] == "failure"
+    assert data["trace"]["attempts"][1]["outcome"] == "success"
+
+
 def test_chat_completions_returns_local_answer_with_trace_when_cloud_provider_is_unconfigured() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
@@ -152,7 +229,7 @@ def test_chat_completions_returns_local_answer_with_trace_when_cloud_provider_is
     data = response.json()
     assert data["route"]["provider"] == "ollama"
     assert data["trace"]["escalated"] is False
-    assert "no cloud provider is configured" in data["trace"]["escalation_reason"]
+    assert "cloud route failed" in data["trace"]["escalation_reason"]
 
 
 def test_chat_completions_auto_force_local_for_email_like_content() -> None:

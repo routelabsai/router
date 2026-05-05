@@ -49,11 +49,13 @@ def test_client_chat_stats_logs_and_health(monkeypatch) -> None:
 
     client = RouteLabsClient("http://example.test")
     client.chat([{"role": "user", "content": "hello"}], private=False)
+    client.models()
     client.stats()
     client.logs()
     client.health()
 
     assert fake.calls[0][1] == "http://example.test/v1/chat/completions"
-    assert fake.calls[1][1] == "http://example.test/v1/stats"
-    assert fake.calls[2][1] == "http://example.test/v1/logs"
-    assert fake.calls[3][1] == "http://example.test/healthz"
+    assert fake.calls[1][1] == "http://example.test/v1/models"
+    assert fake.calls[2][1] == "http://example.test/v1/stats"
+    assert fake.calls[3][1] == "http://example.test/v1/logs"
+    assert fake.calls[4][1] == "http://example.test/healthz"

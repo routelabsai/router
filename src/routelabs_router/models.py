@@ -68,9 +68,18 @@ class VerificationResult(BaseModel):
     should_escalate: bool
 
 
+class ProviderAttempt(BaseModel):
+    provider: str
+    model: str
+    target: str
+    outcome: str
+    reason: str | None = None
+
+
 class DecisionTrace(BaseModel):
     privacy: "PrivacyDetectionResult | None" = None
     initial_route: RouteDecision
+    attempts: list[ProviderAttempt] = Field(default_factory=list)
     verification: VerificationResult | None = None
     escalated: bool = False
     escalation_reason: str | None = None
@@ -147,6 +156,17 @@ class RouteLogEntry(BaseModel):
 
 class RouteLogResponse(BaseModel):
     entries: list[RouteLogEntry]
+
+
+class ModelCard(BaseModel):
+    id: str
+    object: str = "model"
+    owned_by: str
+
+
+class ModelsListResponse(BaseModel):
+    object: str = "list"
+    data: list[ModelCard]
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:

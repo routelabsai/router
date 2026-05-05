@@ -10,6 +10,8 @@ class ProviderConfig(BaseModel):
     model: str
     api_key_env: str | None = None
     api_key: str | None = None
+    timeout_seconds: float = 60.0
+    max_retries: int = 1
 
 
 class LocalProvidersConfig(BaseModel):
@@ -71,7 +73,7 @@ class Config(BaseModel):
 
 DEFAULT_CONFIG = Config.model_validate(
     {
-        "server": {"host": "127.0.0.1", "port": 8787},
+        "server": {"host": "127.0.0.1", "port": 8000},
         "routing": {
             "default_mode": "balanced",
             "escalate_on_verification_failure": True,

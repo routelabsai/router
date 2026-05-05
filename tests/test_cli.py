@@ -21,7 +21,7 @@ def test_start_command_uses_config_defaults(monkeypatch) -> None:
     cli.main()
 
     assert captured["host"] == "127.0.0.1"
-    assert captured["port"] == 8787
+    assert captured["port"] == 8000
     assert captured["reload"] is False
 
 

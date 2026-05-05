@@ -2,14 +2,15 @@ from typing import Any
 
 import httpx
 
+from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
 from routelabs_router.models import ChatCompletionRequest, ProviderResult
 
 
 class OpenAICompatibleChatAdapter:
-    def __init__(self, config: ProviderConfig, timeout: float = 60.0) -> None:
+    def __init__(self, config: ProviderConfig) -> None:
         self.config = config
-        self.timeout = timeout
+        self.timeout = config.timeout_seconds
 
     def complete(
         self, request: ChatCompletionRequest, model: str | None = None
@@ -22,14 +23,21 @@ class OpenAICompatibleChatAdapter:
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
 
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                f"{self.config.base_url.rstrip('/')}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
-            data = response.json()
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.config.base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError(
+                "openai-compatible", "request timed out"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderExecutionError("openai-compatible", str(exc)) from exc
 
         return ProviderResult(
             content=_extract_content(data),
