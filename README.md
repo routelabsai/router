@@ -44,25 +44,23 @@ Those may come later, but the current product is a runtime + middleware + API.
 
 ## 60-Second Quickstart
 
-Install from PyPI and start the local runtime:
+Install from PyPI, start the runtime, and send one request:
 
 ```bash
 pip install routelabs-router
+export OPENAI_API_KEY=your_api_key_here  # optional, enables cloud execution
 router start --reload
 ```
 
 Then in another terminal:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/route \
+curl -X POST http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"task":"summarize a short product description","private":false}'
-```
-
-If you want cloud execution too:
-
-```bash
-export OPENAI_API_KEY=your_api_key_here
+  -d '{
+    "messages":[{"role":"user","content":"Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity."}],
+    "private":false
+  }'
 ```
 
 ## Install
