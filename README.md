@@ -1,6 +1,6 @@
 # RouteLabs Router
 
-`RouteLabs Router` is a local-first AI runtime with verification-aware escalation and cost visibility.
+`RouteLabs Router` is a local-first runtime that sits between your app and local/cloud LLMs.
 
 It gives applications one endpoint that can decide:
 
@@ -13,6 +13,62 @@ It gives applications one endpoint that can decide:
 - when privacy detection forced local execution
 
 The goal is simple: route each step to the cheapest, fastest, safest model that can still be trusted.
+
+## Who This Is For
+
+This repo is mainly for:
+
+- AI app builders
+- local-first power users
+- agent and workflow developers
+- teams experimenting with privacy-aware and cost-aware inference
+
+If you want a polished end-user chat app, this is not that.
+If you want a runtime and routing layer you can plug into your own tools, this is exactly that.
+
+## What This Is
+
+Think of RouteLabs as:
+
+- a local runtime/server you run on your machine
+- a Python client you can call from your app
+- an OpenAI-compatible endpoint you can place in front of existing clients
+
+It is not primarily:
+
+- a browser extension
+- a desktop UI
+- a plugin marketplace product
+
+Those may come later, but the current product is a runtime + middleware + API.
+
+## 60-Second Quickstart
+
+Current install path: clone the repo, install from source, and run `router start`.
+
+```bash
+git clone https://github.com/routelabsai/router.git
+cd router
+conda create -n routelabs-router python=3.11 -y
+conda activate routelabs-router
+python -m pip install --upgrade pip setuptools wheel
+pip install -e '.[dev]'
+router start --reload
+```
+
+Then in another terminal:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/route \
+  -H "Content-Type: application/json" \
+  -d '{"task":"summarize a short product description","private":false}'
+```
+
+If you want cloud execution too:
+
+```bash
+export OPENAI_API_KEY=your_api_key_here
+```
 
 ## Why Use This
 
@@ -36,6 +92,37 @@ It is for teams who want:
 - a foundation for agentic step-level routing later
 
 For the longer-term product thesis, see [docs/VISION.md](docs/VISION.md).
+
+## How You Use It
+
+There are three main ways to use RouteLabs today.
+
+### 1. As a local runtime/server
+
+Run:
+
+```bash
+router start --reload
+```
+
+Then point your tools to `http://127.0.0.1:8000`.
+
+### 2. As a Python library client
+
+Use the built-in client:
+
+```python
+from routelabs_router import RouteLabsClient
+
+client = RouteLabsClient("http://127.0.0.1:8000")
+print(client.route("Summarize a short product description"))
+```
+
+### 3. As an OpenAI-compatible endpoint
+
+If you already have code using an OpenAI-style client, point it at RouteLabs via `base_url`.
+
+That is one of the easiest ways to adopt it without rewriting your app.
 
 ## What It Looks Like
 
@@ -77,6 +164,13 @@ Expected shape:
   "verify": true
 }
 ```
+
+What this tells you:
+
+- the router chose `local`
+- it selected `ollama`
+- it picked a model
+- it marked the request as worth verification
 
 And you can send an OpenAI-style chat request:
 
@@ -182,6 +276,9 @@ conda activate routelabs-router
 python -m pip install --upgrade pip setuptools wheel
 pip install -e '.[dev]'
 ```
+
+Right now, the install flow is repo-first.
+Later, the natural evolution is a simpler published package install, but today the most reliable path is from source.
 
 ### Configure cloud execution
 
