@@ -289,6 +289,8 @@ What is still early:
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
 - Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Release guide: [docs/RELEASE.md](docs/RELEASE.md)
+- PyPI trusted publishing: [docs/TRUSTED_PUBLISHING.md](docs/TRUSTED_PUBLISHING.md)
 
 ## Getting started
 

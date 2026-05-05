@@ -10,6 +10,8 @@
 
 It is not automatically published to PyPI yet.
 
+The repository now includes a GitHub Actions publish workflow and is ready for PyPI Trusted Publishing setup.
+
 ## Install modes
 
 ### Source install
@@ -64,6 +66,9 @@ python -m twine check dist/*
 ```bash
 python -m twine upload dist/*
 ```
+
+For the longer-term preferred flow, use GitHub Actions Trusted Publishing instead of local `twine upload`.
+See [TRUSTED_PUBLISHING.md](TRUSTED_PUBLISHING.md).
 
 ## After PyPI publication
 
