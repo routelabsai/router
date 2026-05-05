@@ -4,13 +4,12 @@
 
 `RouteLabs Router` is package-ready enough for:
 
+- PyPI installs
 - source installs
 - GitHub-based `pip install`
-- future PyPI publication
+- GitHub Actions releases through Trusted Publishing
 
-It is not automatically published to PyPI yet.
-
-The repository now includes a GitHub Actions publish workflow and is ready for PyPI Trusted Publishing setup.
+The repository includes a GitHub Actions publish workflow using PyPI Trusted Publishing.
 
 ## Install modes
 
@@ -19,6 +18,13 @@ The repository now includes a GitHub Actions publish workflow and is ready for P
 ```bash
 pip install -e '.[dev]'
 router start --reload
+```
+
+### PyPI install
+
+```bash
+pip install routelabs-router
+router start
 ```
 
 ### GitHub install
@@ -46,14 +52,15 @@ router start --help
 
 3. Bump version in `pyproject.toml`
 
-4. Commit and tag
+4. Commit and push the version bump
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git add .
+git commit -m "Release vX.Y.Z"
+git push origin main
 ```
 
-5. Build distributions
+5. Build distributions locally as a sanity check
 
 ```bash
 python -m pip install --upgrade build twine
@@ -61,20 +68,20 @@ python -m build
 python -m twine check dist/*
 ```
 
-6. Publish to PyPI
+6. Create and push the release tag to trigger GitHub Actions publishing
 
 ```bash
-python -m twine upload dist/*
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-For the longer-term preferred flow, use GitHub Actions Trusted Publishing instead of local `twine upload`.
-See [TRUSTED_PUBLISHING.md](TRUSTED_PUBLISHING.md).
-
-## After PyPI publication
-
-Update the README quick install path to:
+7. Verify the published package from a fresh environment
 
 ```bash
 pip install routelabs-router
-router start
+router --help
+router start --help
 ```
+
+For the preferred release flow, use GitHub Actions Trusted Publishing.
+See [TRUSTED_PUBLISHING.md](TRUSTED_PUBLISHING.md).

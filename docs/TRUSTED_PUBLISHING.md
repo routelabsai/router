@@ -11,9 +11,10 @@ Trusted Publishing is better than long-lived API tokens because:
 - GitHub Actions exchanges a short-lived OIDC identity token with PyPI
 - future releases become a tag push or workflow dispatch
 
-## One-time PyPI setup
+## PyPI setup
 
-Before the workflow can publish, configure a Trusted Publisher in PyPI.
+This repository is already configured for GitHub-side publishing.
+The remaining requirement is the matching Trusted Publisher configuration in PyPI.
 
 On PyPI:
 
@@ -48,8 +49,8 @@ It:
 ### Option 1: tag push
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 ### Option 2: manual workflow dispatch
@@ -65,11 +66,11 @@ Use the GitHub Actions UI to run `Publish to PyPI`.
 5. Watch the `Publish to PyPI` workflow
 6. Verify `pip install routelabs-router`
 
-## After first successful publish
+## Current release command
 
-Update the README primary install path to:
+Create and push a version tag:
 
 ```bash
-pip install routelabs-router
-router start
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```

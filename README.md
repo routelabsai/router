@@ -44,15 +44,10 @@ Those may come later, but the current product is a runtime + middleware + API.
 
 ## 60-Second Quickstart
 
-Current install path: clone the repo, install from source, and run `router start`.
+Install from PyPI and start the local runtime:
 
 ```bash
-git clone https://github.com/routelabsai/router.git
-cd router
-conda create -n routelabs-router python=3.11 -y
-conda activate routelabs-router
-python -m pip install --upgrade pip setuptools wheel
-pip install -e '.[dev]'
+pip install routelabs-router
 router start --reload
 ```
 
@@ -70,20 +65,16 @@ If you want cloud execution too:
 export OPENAI_API_KEY=your_api_key_here
 ```
 
-## Install Options
+## Install
 
-Today there are two realistic install paths:
-
-### 1. Easiest user install
-
-Install directly from GitHub:
+### Recommended user install
 
 ```bash
-pip install git+https://github.com/routelabsai/router.git
+pip install routelabs-router
 router start
 ```
 
-### 2. Best contributor install
+### Contributor install
 
 Clone the repo and install from source:
 
@@ -96,8 +87,6 @@ python -m pip install --upgrade pip setuptools wheel
 pip install -e '.[dev]'
 router start --reload
 ```
-
-PyPI publication is the natural next packaging step, but the project is not published there yet.
 
 ## Why Use This
 
@@ -124,7 +113,7 @@ For the longer-term product thesis, see [docs/VISION.md](docs/VISION.md).
 
 ## How You Use It
 
-There are three main ways to use RouteLabs today.
+There are three practical ways to adopt RouteLabs today.
 
 ### 1. As a local runtime/server
 
@@ -214,16 +203,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 
 If `Ollama` is running locally, that request executes against your configured local model.
 If `OPENAI_API_KEY` is set, high-complexity requests can route through the configured OpenAI-compatible cloud provider.
-The response now includes a trace showing the initial route, verification result, and any escalation.
-
-It sits between applications and model runtimes, then decides whether a request should run on a local model or a cloud model based on:
-
-- cost
-- latency
-- task complexity
-- privacy policy
-- runtime health
-- verification signals
+The response includes a trace showing the initial route, verification result, and any escalation.
 
 ## Positioning
 
@@ -253,9 +233,9 @@ This repository intentionally starts small. It is a control-plane foundation, no
 - Browser or desktop assistants that need one middleware layer above multiple runtimes
 - Agent systems that want future step-level routing instead of a single fixed model
 
-## Current status
+## Current Status
 
-This is an early but working scaffold. The repository already includes:
+This is an early but usable product foundation. The repository already includes:
 
 - project docs
 - roadmap
@@ -276,7 +256,7 @@ This is an early but working scaffold. The repository already includes:
 - example config profiles
 - example curl flows
 
-What is still early:
+Still early:
 
 - verifiers are heuristic and still early
 - cost and latency dashboards are not implemented yet
@@ -292,24 +272,34 @@ What is still early:
 - Release guide: [docs/RELEASE.md](docs/RELEASE.md)
 - PyPI trusted publishing: [docs/TRUSTED_PUBLISHING.md](docs/TRUSTED_PUBLISHING.md)
 
-## Getting started
+## Setup And Usage
 
 ### Prerequisites
 
 - Python `3.11+`
 - `conda` recommended for the smoothest setup on macOS
 
-### Create the environment
+### Install from PyPI
 
 ```bash
+conda create -n routelabs-router python=3.11 -y
+conda activate routelabs-router
+python -m pip install --upgrade pip
+pip install routelabs-router
+```
+
+### Install from source
+
+Use this path if you want to contribute or modify the router itself.
+
+```bash
+git clone https://github.com/routelabsai/router.git
+cd router
 conda create -n routelabs-router python=3.11 -y
 conda activate routelabs-router
 python -m pip install --upgrade pip setuptools wheel
 pip install -e '.[dev]'
 ```
-
-Right now, the install flow is repo-first.
-Later, the natural evolution is a simpler published package install, but today the most reliable path is from source.
 
 ### Configure cloud execution
 
@@ -346,13 +336,13 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 
 Use one as your active config by copying or merging it into [`config/router.yaml`](config/router.yaml).
 
-### Run the daemon
+### Start the runtime
 
 ```bash
 router start --reload
 ```
 
-If you want explicit host/port overrides:
+For explicit host or port overrides:
 
 ```bash
 router start --host 0.0.0.0 --port 8000 --reload
@@ -464,8 +454,8 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
   }'
 ```
 
-If `Ollama` is running locally, the chat endpoint will execute against your configured local model. If the router decides a task should go to the cloud, the API currently returns `501` until the first cloud adapter is added.
-If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return `501` with a clear configuration error.
+If `Ollama` is running locally, the chat endpoint will execute against your configured local model.
+If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return a clear configuration error.
 The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
 It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
 The logs endpoint exposes recent request-level decisions so users can inspect privacy detection, verification, escalation, final route choice, and estimated per-request cost directly.
@@ -489,7 +479,7 @@ Start `Ollama`, make sure the configured model exists, then run the server:
 ```bash
 ollama serve
 ollama pull qwen3:4b
-uvicorn routelabs_router.server.app:app --reload
+router start --reload
 ```
 
 The default local provider configuration lives in [`config/router.yaml`](config/router.yaml).
@@ -515,19 +505,19 @@ curl -X POST http://127.0.0.1:8000/v1/route \
 - curl walkthrough: [`examples/curl-quickstart.md`](examples/curl-quickstart.md)
 - product framing and common scenarios: [`examples/use-cases.md`](examples/use-cases.md)
 
-## Example routing philosophy
+## Example Routing Philosophy
 
 - send simple, low-risk tasks to local models first
 - prefer local execution when privacy rules require it
 - escalate to stronger models when verification or confidence checks fail
 - keep the decision trace visible so routing can be audited and improved
 
-## Near-term roadmap
+## Near-Term Roadmap
 
-- generic OpenAI-compatible cloud adapter
+- richer verification strategies beyond heuristics
 - policy packs for privacy and cost controls
-- task classification and prompt-shape heuristics
-- verification hooks and fallback thresholds
+- better task classification and prompt-shape heuristics
+- latency-aware telemetry and routing feedback loops
 - benchmark harness for local vs cloud trade-off analysis
 
 More detail lives in [ROADMAP.md](ROADMAP.md).
