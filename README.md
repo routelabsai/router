@@ -70,6 +70,35 @@ If you want cloud execution too:
 export OPENAI_API_KEY=your_api_key_here
 ```
 
+## Install Options
+
+Today there are two realistic install paths:
+
+### 1. Easiest user install
+
+Install directly from GitHub:
+
+```bash
+pip install git+https://github.com/routelabsai/router.git
+router start
+```
+
+### 2. Best contributor install
+
+Clone the repo and install from source:
+
+```bash
+git clone https://github.com/routelabsai/router.git
+cd router
+conda create -n routelabs-router python=3.11 -y
+conda activate routelabs-router
+python -m pip install --upgrade pip setuptools wheel
+pip install -e '.[dev]'
+router start --reload
+```
+
+PyPI publication is the natural next packaging step, but the project is not published there yet.
+
 ## Why Use This
 
 Most teams today have one of these problems:
