@@ -72,7 +72,11 @@ class ChatService:
             allow_cross_target_fallback=not effective_private,
         )
 
-        if initial_route.verify and trace.final_route.target == "local":
+        if (
+            initial_route.verify
+            and trace.final_route.target == "local"
+            and not result.tool_calls
+        ):
             verification = self.verifier.evaluate(
                 task=task,
                 complexity=initial_route.complexity,
@@ -376,7 +380,11 @@ def _build_chat_response(
         choices=[
             ChatCompletionChoice(
                 index=0,
-                message=ChatMessage(role="assistant", content=result.content),
+                message=ChatMessage(
+                    role="assistant",
+                    content=result.content,
+                    tool_calls=result.tool_calls,
+                ),
                 finish_reason=result.finish_reason,
             )
         ],

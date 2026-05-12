@@ -26,6 +26,18 @@ class OpenAICompatibleChatAdapter:
             "model": model or request.model or self.config.model,
             "messages": [message.model_dump() for message in request.messages],
         }
+        if request.tools is not None:
+            payload["tools"] = request.tools
+        if request.tool_choice is not None:
+            payload["tool_choice"] = request.tool_choice
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
+        if request.stop is not None:
+            payload["stop"] = request.stop
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
@@ -51,6 +63,7 @@ class OpenAICompatibleChatAdapter:
             model=data.get("model", payload["model"]),
             finish_reason=_extract_finish_reason(data),
             usage=_extract_usage(data),
+            tool_calls=_extract_tool_calls(data),
             raw=data,
         )
 
@@ -102,7 +115,19 @@ def _extract_content(data: dict[str, Any]) -> str:
     if not choices:
         return ""
     message = choices[0].get("message", {})
-    return str(message.get("content", ""))
+    content = message.get("content", "")
+    return "" if content is None else str(content)
+
+
+def _extract_tool_calls(data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    choices = data.get("choices", [])
+    if not choices:
+        return None
+    message = choices[0].get("message", {})
+    tool_calls = message.get("tool_calls")
+    if not tool_calls:
+        return None
+    return tool_calls
 
 
 def _extract_finish_reason(data: dict[str, Any]) -> str:

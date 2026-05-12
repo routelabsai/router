@@ -105,6 +105,7 @@ It is for teams who want:
 - one API for hybrid local + cloud inference
 - OpenAI-compatible model discovery for existing SDKs and UIs
 - embeddings support for retrieval and RAG-style workflows
+- tool-calling support for agent workflows
 - verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
@@ -251,6 +252,7 @@ This is an early but usable product foundation. The repository already includes:
 - OpenAI-style `/v1/chat/completions` endpoint
 - OpenAI-style `/v1/embeddings` endpoint
 - OpenAI-compatible `/v1/models` discovery endpoint
+- tool-call passthrough for OpenAI-style clients
 - real local execution through `Ollama`
 - generic OpenAI-compatible cloud execution
 - first verification-aware escalation loop
@@ -486,6 +488,37 @@ If the local provider is unavailable and the request is not forced to stay priva
 The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
 It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
 The logs endpoint exposes recent request-level decisions so users can inspect privacy detection, verification, escalation, final route choice, and estimated per-request cost directly.
+
+### Tool calling
+
+RouteLabs now passes through OpenAI-style `tools` and `tool_choice` fields, which makes it more usable for agent loops and function-calling workflows.
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"route-auto",
+    "messages":[{"role":"user","content":"What is the weather in Chicago?"}],
+    "tools":[
+      {
+        "type":"function",
+        "function":{
+          "name":"get_weather",
+          "description":"Get weather for a city",
+          "parameters":{
+            "type":"object",
+            "properties":{"city":{"type":"string"}},
+            "required":["city"]
+          }
+        }
+      }
+    ]
+  }'
+```
+
+If the model decides to call a tool, the response returns OpenAI-style `tool_calls` in the assistant message.
 
 ### Existing tool compatibility
 

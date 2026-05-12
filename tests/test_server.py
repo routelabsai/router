@@ -71,6 +71,27 @@ class WeakLocalProvider:
         )
 
 
+class ToolCallingProvider:
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        return ProviderResult(
+            content="",
+            model=model or "tool-local-model",
+            finish_reason="tool_calls",
+            tool_calls=[
+                {
+                    "id": "call_weather",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"city\":\"Chicago\"}",
+                    },
+                }
+            ],
+        )
+
+
 class FailingLocalProvider:
     def complete(
         self, request: ChatCompletionRequest, model: str | None = None
@@ -226,6 +247,47 @@ def test_chat_completions_treats_route_auto_as_router_selected_model() -> None:
     data = response.json()
     assert data["model"] == DEFAULT_CONFIG.providers.local.ollama.model
     assert data["trace"]["attempts"][0]["outcome"] == "success"
+
+
+def test_chat_completions_return_tool_calls_without_escalation() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": ToolCallingProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "route-auto",
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather for a city",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "city": {"type": "string"}
+                            },
+                            "required": ["city"],
+                        },
+                    },
+                }
+            ],
+            "messages": [{"role": "user", "content": "What's the weather in Chicago?"}],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["choices"][0]["finish_reason"] == "tool_calls"
+    assert data["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert data["trace"]["escalated"] is False
 
 
 def test_chat_completions_uses_cloud_provider_for_high_complexity_tasks() -> None:

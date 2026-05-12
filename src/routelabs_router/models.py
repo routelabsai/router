@@ -19,13 +19,23 @@ class RouteDecision(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: str | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+    tool_name: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1)
     model: str | None = None
     private: bool = False
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    stop: str | list[str] | None = None
 
 
 class EmbeddingsRequest(BaseModel):
@@ -83,10 +93,11 @@ class ProviderEmbeddingResult(BaseModel):
 
 
 class ProviderResult(BaseModel):
-    content: str
+    content: str | None = None
     model: str
     finish_reason: str = "stop"
     usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)
+    tool_calls: list[dict[str, Any]] | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

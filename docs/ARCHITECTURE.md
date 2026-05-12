@@ -50,6 +50,7 @@ Today the repository supports:
 - `/v1/chat/completions` for OpenAI-style chat requests
 - `/v1/embeddings` for OpenAI-style embeddings requests
 - `/v1/models` for OpenAI-compatible model discovery
+- OpenAI-style tool-call passthrough through `/v1/chat/completions`
 - `/v1/stats` for simple routing telemetry
 - `/v1/logs` for recent request-level route logs
 - `Ollama` as the first real execution backend
@@ -65,6 +66,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - local provider failures can fall back to the cloud when policy allows it
 - embeddings requests use the same local-first policy with cloud fallback when privacy allows it
 - verification can escalate weak local responses to the cloud when configured
+- tool-calling responses bypass verification escalation and return `tool_calls` directly so agent loops can continue normally
 - if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency
 - provider attempts are captured in the trace so users can see failures, retries, and fallback outcomes
