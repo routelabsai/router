@@ -273,8 +273,8 @@ Still early:
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
 - Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Release guide: [docs/RELEASE.md](docs/RELEASE.md)
-- PyPI trusted publishing: [docs/TRUSTED_PUBLISHING.md](docs/TRUSTED_PUBLISHING.md)
+- Release guide: [docs/release/README.md](docs/release/README.md)
+- PyPI trusted publishing: [docs/release/trusted-publishing.md](docs/release/trusted-publishing.md)
 
 ## Setup And Usage
 

@@ -84,4 +84,4 @@ router start --help
 ```
 
 For the preferred release flow, use GitHub Actions Trusted Publishing.
-See [TRUSTED_PUBLISHING.md](TRUSTED_PUBLISHING.md).
+See [Trusted Publishing Setup](trusted-publishing.md).
