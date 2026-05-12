@@ -356,7 +356,9 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 
 - `balanced.yaml`
 - `local-first.yaml`
+- `openclaw.yaml`
 - `privacy-first.yaml`
+- `unsloth-local.yaml`
 
 Use one as your active config by copying or merging it into [`config/router.yaml`](config/router.yaml).
 
@@ -490,6 +492,11 @@ Model discovery:
 ```bash
 curl http://127.0.0.1:8000/v1/models
 ```
+
+Ecosystem workflows:
+
+- OpenClaw: [examples/openclaw.md](examples/openclaw.md)
+- Unsloth: [examples/unsloth.md](examples/unsloth.md)
 
 Embeddings:
 
