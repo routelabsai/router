@@ -468,6 +468,11 @@ You may need to install the OpenAI SDK separately:
 pip install openai
 ```
 
+For a multi-step tool-calling example, see:
+
+- [`examples/agent-loop.py`](examples/agent-loop.py)
+- [`examples/agent-loop.md`](examples/agent-loop.md)
+
 The stats response includes simple estimated fields such as:
 
 - `estimated_total_cost_usd`
@@ -629,6 +634,7 @@ curl -X POST http://127.0.0.1:8000/v1/route \
 
 - curl walkthrough: [`examples/curl-quickstart.md`](examples/curl-quickstart.md)
 - product framing and common scenarios: [`examples/use-cases.md`](examples/use-cases.md)
+- agent loop walkthrough: [`examples/agent-loop.md`](examples/agent-loop.md)
 
 ## Example Routing Philosophy
 

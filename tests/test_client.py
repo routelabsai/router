@@ -61,3 +61,29 @@ def test_client_chat_stats_logs_and_health(monkeypatch) -> None:
     assert fake.calls[3][1] == "http://example.test/v1/stats"
     assert fake.calls[4][1] == "http://example.test/v1/logs"
     assert fake.calls[5][1] == "http://example.test/healthz"
+
+
+def test_client_chat_supports_agent_loop_fields(monkeypatch) -> None:
+    fake = FakeHTTPClient()
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+
+    client = RouteLabsClient("http://example.test")
+    client.chat(
+        [{"role": "user", "content": "What's the weather in Chicago?"}],
+        model="route-auto",
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+        tool_choice="auto",
+    )
+
+    payload = fake.calls[0][2]
+    assert payload["model"] == "route-auto"
+    assert payload["tools"][0]["function"]["name"] == "get_weather"
+    assert payload["tool_choice"] == "auto"
