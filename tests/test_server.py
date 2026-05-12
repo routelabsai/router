@@ -265,6 +265,42 @@ def test_healthz_reports_provider_statuses() -> None:
     assert "status" in data["providers"]["ollama"]
 
 
+def test_healthz_reports_degraded_when_only_cloud_is_available() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "degraded"
+    assert data["providers"]["ollama"]["available"] is False
+    assert data["providers"]["openai-compatible"]["available"] is True
+
+
+def test_healthz_reports_error_when_no_provider_is_available() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "error"
+    assert data["providers"]["ollama"]["available"] is False
+    assert data["providers"]["openai-compatible"]["available"] is False
+
+
 def test_chat_completions_treats_route_auto_as_router_selected_model() -> None:
     service = ChatService(
         DEFAULT_CONFIG,

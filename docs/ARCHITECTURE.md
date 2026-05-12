@@ -46,6 +46,7 @@ The ideal future flow is:
 
 Today the repository supports:
 
+- `/healthz` for runtime and provider readiness
 - `/v1/route` for route inspection
 - `/v1/chat/completions` for OpenAI-style chat requests
 - `/v1/embeddings` for OpenAI-style embeddings requests
@@ -63,10 +64,13 @@ Today the repository supports:
 
 The current execution behavior is intentionally conservative but now genuinely hybrid:
 
+- `/healthz` reports whether the system is healthy, degraded, or unusable based on live provider readiness
+- `/v1/route` is a planning endpoint that now includes provider availability and fallback availability metadata
 - local routes execute through `Ollama`
 - cloud routes execute through a generic OpenAI-compatible adapter when an API key is configured
 - local provider failures can fall back to the cloud when policy allows it
 - embeddings requests use the same local-first policy with cloud fallback when privacy allows it
+- if local embeddings fail and cloud embeddings are not configured, the API returns a clear configuration error rather than a misleading capability error
 - verification can escalate weak local responses to the cloud when configured
 - tool-calling responses bypass verification escalation and return `tool_calls` directly so agent loops can continue normally
 - streaming currently happens at the RouteLabs API layer after route selection so existing OpenAI-style clients can consume SSE chunks

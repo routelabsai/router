@@ -207,7 +207,19 @@ class ChatService:
                 self.config.providers.cloud.default
             ),
         }
-        return HealthResponse(status="ok", providers=providers)
+        local_default = self.config.providers.local.default
+        cloud_default = self.config.providers.cloud.default
+        local_available = providers[local_default].available
+        cloud_available = providers[cloud_default].available
+
+        if local_available:
+            status = "ok"
+        elif cloud_available:
+            status = "degraded"
+        else:
+            status = "error"
+
+        return HealthResponse(status=status, providers=providers)
 
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
@@ -400,6 +412,9 @@ class ChatService:
 
     def _provider_readiness(self, provider_name: str) -> tuple[bool, str]:
         if provider_name == "ollama":
+            provider = self.providers.get(provider_name)
+            if provider is not None and not isinstance(provider, OllamaChatAdapter):
+                return True, "ready"
             base_url = self.config.providers.local.ollama.base_url.rstrip("/")
             try:
                 with httpx.Client(timeout=1.0) as client:
@@ -410,6 +425,11 @@ class ChatService:
                 return False, "unreachable"
 
         if provider_name == "openai-compatible":
+            provider = self.providers.get(provider_name)
+            if provider is not None and not isinstance(
+                provider, OpenAICompatibleChatAdapter
+            ):
+                return True, "configured"
             if not self.config.providers.cloud.openai_compatible.api_key:
                 return False, "not_configured"
             return True, "configured"

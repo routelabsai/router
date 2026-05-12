@@ -186,7 +186,11 @@ Expected shape:
   "model": "qwen3:4b",
   "reason": "task is suitable for local-first execution",
   "complexity": "medium",
-  "verify": true
+  "verify": true,
+  "provider_available": true,
+  "provider_status": "ready",
+  "fallback_available": false,
+  "fallback_status": "not_configured"
 }
 ```
 
@@ -196,6 +200,10 @@ What this tells you:
 - it selected `ollama`
 - it picked a model
 - it marked the request as worth verification
+- it reports whether the planned provider is actually reachable right now
+- it reports whether cloud fallback is available if the local route fails
+
+`/v1/route` is a planning endpoint, not an execution endpoint. It tells you what RouteLabs would try first and whether that path currently looks available.
 
 And you can send an OpenAI-style chat request:
 
@@ -374,6 +382,30 @@ Health check:
 curl http://127.0.0.1:8000/healthz
 ```
 
+Expected shape:
+
+```json
+{
+  "status": "ok",
+  "providers": {
+    "ollama": {
+      "available": true,
+      "status": "ready"
+    },
+    "openai-compatible": {
+      "available": false,
+      "status": "not_configured"
+    }
+  }
+}
+```
+
+Health status semantics:
+
+- `ok`: the local-first path is available
+- `degraded`: local is unavailable, but cloud execution is still possible
+- `error`: neither local nor cloud execution is currently usable
+
 Route inspection:
 
 ```bash
@@ -410,6 +442,8 @@ curl -X POST http://127.0.0.1:8000/v1/embeddings \
     "private":false
   }'
 ```
+
+If local embeddings fail and cloud embeddings are not configured, RouteLabs now returns a clearer configuration error instead of a misleading “provider does not support embeddings” message.
 
 ### Python client
 
