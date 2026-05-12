@@ -113,8 +113,6 @@ It is for teams who want:
 - provider and model selection that can evolve over time
 - a foundation for agentic step-level routing later
 
-For the longer-term product thesis, see [docs/VISION.md](docs/VISION.md).
-
 ## How You Use It
 
 There are three practical ways to adopt RouteLabs today.
@@ -272,7 +270,6 @@ Still early:
 
 ## More Docs
 
-- Product vision: [docs/VISION.md](docs/VISION.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
 - Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
