@@ -51,6 +51,7 @@ Today the repository supports:
 - `/v1/chat/completions` for OpenAI-style chat requests
 - `/v1/embeddings` for OpenAI-style embeddings requests
 - `/v1/models` for OpenAI-compatible model discovery
+- live `Ollama` model inventory folded into `/v1/models` when available
 - OpenAI-style tool-call passthrough through `/v1/chat/completions`
 - OpenAI-style SSE streaming through `/v1/chat/completions`
 - common OpenAI request-field passthrough and structured-output mapping
@@ -80,8 +81,10 @@ The current execution behavior is intentionally conservative but now genuinely h
 - provider attempts are captured in the trace so users can see failures, retries, and fallback outcomes
 - in-memory telemetry tracks local/cloud outcomes and escalation counts
 - telemetry also reports simple estimated savings against an all-cloud baseline
+- telemetry now tracks request-kind counts, latency, and chat token-speed averages
 - heuristic privacy detection can force local execution for obvious sensitive or code-like content
 - recent route logs expose per-request trace data for debugging and trust
+- CLI doctor and model-inventory commands surface readiness and model visibility before requests are sent
 
 ## Near-term implementation shape
 

@@ -24,6 +24,16 @@ def main() -> None:
         help="Whether the task contains private data",
     )
 
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Inspect runtime readiness and setup gaps"
+    )
+    doctor_parser.add_argument("--config", default="./config/router.yaml")
+
+    models_parser = subparsers.add_parser(
+        "models", help="List configured and discovered models"
+    )
+    models_parser.add_argument("--config", default="./config/router.yaml")
+
     start_parser = subparsers.add_parser("start", help="Start the RouteLabs server")
     start_parser.add_argument("--config", default="./config/router.yaml")
     start_parser.add_argument("--host", default=None)
@@ -48,6 +58,12 @@ def main() -> None:
         print(f"reason: {decision.reason}")
         print(f"complexity: {decision.complexity}")
         print(f"verify: {decision.verify}")
+    elif args.command == "doctor":
+        config = load_config(Path(args.config))
+        _print_doctor_report(ChatService(config), config)
+    elif args.command == "models":
+        config = load_config(Path(args.config))
+        _print_models(ChatService(config))
     elif args.command == "start":
         config = load_config(Path(args.config))
         _print_startup_status(config)
@@ -73,6 +89,11 @@ def _print_startup_status(config) -> None:
 
     print(f"Local provider ({local_name}): {local.status}")
     print(f"Cloud provider ({cloud_name}): {cloud.status}")
+    for model_name in _missing_configured_ollama_models(service, config):
+        print(
+            f"Warning: configured Ollama model '{model_name}' is not installed yet. "
+            f"Pull it with `ollama pull {model_name}`."
+        )
 
     if not local.available:
         print(
@@ -90,3 +111,87 @@ def _print_startup_status(config) -> None:
             "Warning: no execution path is currently available. "
             "Start a local provider or configure a cloud provider before sending requests."
         )
+
+
+def _print_doctor_report(service: ChatService, config) -> None:
+    health = service.health()
+    print("RouteLabs Doctor")
+    print(f"Status: {health.status}")
+
+    local_name = config.providers.local.default
+    cloud_name = config.providers.cloud.default
+    local = health.providers[local_name]
+    cloud = health.providers[cloud_name]
+
+    print(f"Local provider ({local_name}): {local.status}")
+    print(f"Cloud provider ({cloud_name}): {cloud.status}")
+    print(f"Configured local chat model: {config.providers.local.ollama.model}")
+    print(
+        "Configured local embedding model: "
+        f"{config.providers.local.ollama.embedding_model or config.providers.local.ollama.model}"
+    )
+    print(
+        "Configured cloud chat model: "
+        f"{config.providers.cloud.openai_compatible.model}"
+    )
+    print(
+        "Configured cloud embedding model: "
+        f"{config.providers.cloud.openai_compatible.embedding_model or config.providers.cloud.openai_compatible.model}"
+    )
+
+    installed_ollama_models = [
+        model for model in service.list_models().data if model.provider == "ollama" and model.source == "installed"
+    ]
+    if installed_ollama_models:
+        print("Installed Ollama models:")
+        for model in installed_ollama_models:
+            print(f"- {model.id}")
+    else:
+        print("Installed Ollama models: none detected")
+
+    configured_local_models = {
+        config.providers.local.ollama.model,
+        config.providers.local.ollama.embedding_model
+        or config.providers.local.ollama.model,
+    }
+    installed_ids = {model.id for model in installed_ollama_models}
+    missing = sorted(model for model in configured_local_models if model not in installed_ids)
+    if missing:
+        print("Missing configured Ollama models:")
+        for model in missing:
+            print(f"- {model}")
+    if not local.available:
+        print("Action: run `ollama serve` to enable local execution.")
+    if not cloud.available:
+        env_name = config.providers.cloud.openai_compatible.api_key_env or "OPENAI_API_KEY"
+        print(f"Action: set `{env_name}` to enable cloud fallback and escalation.")
+
+
+def _print_models(service: ChatService) -> None:
+    models = service.list_models().data
+    print("RouteLabs Models")
+    print("Configured and discovered models:")
+    for model in models:
+        source = model.source or "unknown"
+        provider = model.provider or "unknown"
+        status = model.status or "unknown"
+        installed = (
+            f", installed={model.installed}" if model.installed is not None else ""
+        )
+        print(
+            f"- {model.id} [{provider}] source={source}, status={status}{installed}"
+        )
+
+
+def _missing_configured_ollama_models(service: ChatService, config) -> list[str]:
+    configured_local_models = {
+        config.providers.local.ollama.model,
+        config.providers.local.ollama.embedding_model
+        or config.providers.local.ollama.model,
+    }
+    installed_ids = {
+        model.id
+        for model in service.list_models().data
+        if model.provider == "ollama" and model.status == "installed"
+    }
+    return sorted(model for model in configured_local_models if model not in installed_ids)

@@ -182,6 +182,38 @@ def test_models_endpoint_lists_route_auto_and_configured_models() -> None:
     assert DEFAULT_CONFIG.providers.cloud.openai_compatible.model in model_ids
     assert DEFAULT_CONFIG.providers.local.ollama.embedding_model in model_ids
     assert DEFAULT_CONFIG.providers.cloud.openai_compatible.embedding_model in model_ids
+    route_auto = next(
+        item for item in response.json()["data"] if item["id"] == "route-auto"
+    )
+    assert route_auto["source"] == "virtual"
+
+
+def test_models_endpoint_merges_live_ollama_inventory(monkeypatch) -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    monkeypatch.setattr(
+        service,
+        "_ollama_model_inventory",
+        lambda: [
+            {"id": DEFAULT_CONFIG.providers.local.ollama.model, "size_bytes": 123},
+            {"id": "mistral:7b", "size_bytes": 456},
+        ],
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    qwen = next(item for item in data if item["id"] == DEFAULT_CONFIG.providers.local.ollama.model)
+    assert qwen["installed"] is True
+    assert qwen["size_bytes"] == 123
+    mistral = next(item for item in data if item["id"] == "mistral:7b")
+    assert mistral["source"] == "installed"
 
 
 def test_embeddings_use_local_provider_by_default() -> None:
@@ -623,6 +655,10 @@ def test_stats_endpoint_tracks_local_cloud_and_escalation_counts() -> None:
     assert stats["estimated_baseline_cloud_cost_usd"] == 0.04
     assert stats["estimated_cost_saved_usd"] == 0.0198
     assert stats["estimated_cloud_requests_avoided"] == 1
+    assert stats["chat_requests"] == 2
+    assert stats["embedding_requests"] == 0
+    assert stats["avg_total_latency_ms"] >= 0
+    assert stats["avg_chat_latency_ms"] >= 0
 
 
 def test_stats_endpoint_tracks_auto_private_requests() -> None:
@@ -697,6 +733,38 @@ def test_logs_endpoint_returns_recent_route_entries() -> None:
     earlier = entries[1]
     assert latest["trace"]["final_route"]["provider"] in {"ollama", "openai-compatible"}
     assert "request_id" in latest
+    assert latest["request_kind"] == "chat"
     assert "estimated_request_cost_usd" in latest
+    assert "total_latency_ms" in latest
     assert "task_preview" in latest
     assert earlier["trace"]["privacy"]["detected"] is True
+
+
+def test_embeddings_requests_are_recorded_in_stats_and_logs() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    client.post(
+        "/v1/embeddings",
+        json={"input": "hello world", "private": False},
+    )
+
+    stats_response = client.get("/v1/stats")
+    logs_response = client.get("/v1/logs")
+
+    assert stats_response.status_code == 200
+    stats = stats_response.json()
+    assert stats["total_requests"] == 1
+    assert stats["chat_requests"] == 0
+    assert stats["embedding_requests"] == 1
+    assert stats["avg_embedding_latency_ms"] >= 0
+
+    assert logs_response.status_code == 200
+    latest = logs_response.json()["entries"][0]
+    assert latest["request_kind"] == "embeddings"
+    assert latest["trace"]["attempts"][0]["duration_ms"] >= 0

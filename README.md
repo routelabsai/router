@@ -104,6 +104,7 @@ It is for teams who want:
 
 - one API for hybrid local + cloud inference
 - OpenAI-compatible model discovery for existing SDKs and UIs
+- live `Ollama` model discovery
 - embeddings support for retrieval and RAG-style workflows
 - tool-calling support for agent workflows
 - OpenAI-style streaming responses for chat completions
@@ -114,6 +115,7 @@ It is for teams who want:
 - automatic local preference for obvious sensitive or code-like content
 - automatic local-to-cloud fallback when a provider is unavailable
 - cost and latency visibility
+- token-speed visibility for chat requests
 - provider and model selection that can evolve over time
 - a foundation for agentic step-level routing later
 
@@ -270,7 +272,9 @@ This is an early but usable product foundation. The repository already includes:
 - first verification-aware escalation loop
 - automatic fallback from local provider failures to the cloud when policy allows it
 - stats endpoint for local/cloud/escalation visibility
+- runtime doctor and model inventory CLI commands
 - simple estimated cost savings in stats
+- latency and token-speed metrics in stats and logs
 - heuristic privacy detection for email/identifier/code-like content
 - recent route logs for per-request inspection
 - test coverage for routing and API behavior
@@ -386,6 +390,33 @@ router start --host 0.0.0.0 --port 8000 --reload
 router route --task "summarize a short product description" --private false
 ```
 
+### Run environment checks
+
+```bash
+router doctor
+```
+
+This shows:
+
+- local and cloud provider readiness
+- configured chat and embedding models
+- installed `Ollama` models when RouteLabs can detect them
+- missing configured local models
+- the next setup action if something is unavailable
+
+### List visible models
+
+```bash
+router models
+```
+
+This shows:
+
+- virtual models like `route-auto`
+- configured local and cloud models
+- installed `Ollama` models discovered live
+- whether each model is `installed`, `configured`, or `not_configured`
+
 ### Test the API
 
 Health check:
@@ -432,11 +463,27 @@ Stats endpoint:
 curl http://127.0.0.1:8000/v1/stats
 ```
 
+It includes:
+
+- chat vs embeddings request counts
+- average total latency
+- average chat latency
+- average embeddings latency
+- average local vs cloud latency
+- average completion token speed for chat requests
+
 Recent route logs:
 
 ```bash
 curl http://127.0.0.1:8000/v1/logs
 ```
+
+Each log entry includes:
+
+- request kind
+- total request latency
+- completion tokens per second when available
+- per-attempt timing in the trace
 
 Model discovery:
 

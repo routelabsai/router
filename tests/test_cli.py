@@ -28,6 +28,12 @@ def test_start_command_uses_config_defaults(monkeypatch) -> None:
                 },
             )
 
+        def list_models(self):
+            class Response:
+                data = []
+
+            return Response()
+
     monkeypatch.setattr(uvicorn, "run", fake_run)
     monkeypatch.setattr(cli, "ChatService", FakeService)
     monkeypatch.setattr(
@@ -64,6 +70,12 @@ def test_start_command_allows_overrides(monkeypatch) -> None:
                     ),
                 },
             )
+
+        def list_models(self):
+            class Response:
+                data = []
+
+            return Response()
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
     monkeypatch.setattr(cli, "ChatService", FakeService)
@@ -110,6 +122,12 @@ def test_start_command_prints_actionable_startup_warnings(
                 },
             )
 
+        def list_models(self):
+            class Response:
+                data = []
+
+            return Response()
+
     monkeypatch.setattr(uvicorn, "run", fake_run)
     monkeypatch.setattr(cli, "ChatService", FakeService)
     monkeypatch.setattr(
@@ -126,3 +144,141 @@ def test_start_command_prints_actionable_startup_warnings(
     assert "Start Ollama with `ollama serve`" in output
     assert "Set `OPENAI_API_KEY`" in output
     assert "no execution path is currently available" in output
+
+
+def test_start_command_warns_when_configured_ollama_model_is_missing(
+    monkeypatch, capsys
+) -> None:
+    def fake_run(app, host, port, reload) -> None:
+        return None
+
+    class FakeService:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def health(self) -> HealthResponse:
+            return HealthResponse(
+                status="ok",
+                providers={
+                    "ollama": ProviderHealth(available=True, status="ready"),
+                    "openai-compatible": ProviderHealth(
+                        available=False, status="not_configured"
+                    ),
+                },
+            )
+
+        def list_models(self):
+            class Response:
+                data = [
+                    type(
+                        "Model",
+                        (),
+                        {
+                            "id": "route-auto",
+                            "provider": "routelabs",
+                            "source": "virtual",
+                            "status": "ready",
+                            "installed": True,
+                        },
+                    )()
+                ]
+
+            return Response()
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setattr(cli, "ChatService", FakeService)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "start", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "configured Ollama model 'qwen3:4b' is not installed yet" in output
+
+
+def test_doctor_command_prints_runtime_report(monkeypatch, capsys) -> None:
+    class FakeService:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def health(self) -> HealthResponse:
+            return HealthResponse(
+                status="degraded",
+                providers={
+                    "ollama": ProviderHealth(available=False, status="unreachable"),
+                    "openai-compatible": ProviderHealth(
+                        available=True, status="configured"
+                    ),
+                },
+            )
+
+        def list_models(self):
+            class Response:
+                data = []
+
+            return Response()
+
+    monkeypatch.setattr(cli, "ChatService", FakeService)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "doctor", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Doctor" in output
+    assert "Status: degraded" in output
+    assert "Local provider (ollama): unreachable" in output
+    assert "Configured local chat model:" in output
+    assert "Action: run `ollama serve`" in output
+
+
+def test_models_command_prints_known_models(monkeypatch, capsys) -> None:
+    class FakeService:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def list_models(self):
+            class Response:
+                data = [
+                    type(
+                        "Model",
+                        (),
+                        {
+                            "id": "route-auto",
+                            "provider": "routelabs",
+                            "source": "virtual",
+                            "status": "ready",
+                            "installed": True,
+                        },
+                    )(),
+                    type(
+                        "Model",
+                        (),
+                        {
+                            "id": "qwen3:4b",
+                            "provider": "ollama",
+                            "source": "installed",
+                            "status": "installed",
+                            "installed": True,
+                        },
+                    )(),
+                ]
+
+            return Response()
+
+    monkeypatch.setattr(cli, "ChatService", FakeService)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "models", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Models" in output
+    assert "route-auto" in output
+    assert "qwen3:4b" in output

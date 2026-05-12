@@ -125,6 +125,7 @@ class ProviderAttempt(BaseModel):
     target: str
     outcome: str
     reason: str | None = None
+    duration_ms: float | None = None
 
 
 class DecisionTrace(BaseModel):
@@ -135,10 +136,14 @@ class DecisionTrace(BaseModel):
     escalated: bool = False
     escalation_reason: str | None = None
     final_route: RouteDecision
+    total_latency_ms: float | None = None
+    completion_tokens_per_second: float | None = None
 
 
 class RouterStats(BaseModel):
     total_requests: int = 0
+    chat_requests: int = 0
+    embedding_requests: int = 0
     local_responses: int = 0
     cloud_responses: int = 0
     escalations: int = 0
@@ -170,6 +175,8 @@ class RouterStats(BaseModel):
 
 class RouterStatsResponse(BaseModel):
     total_requests: int
+    chat_requests: int
+    embedding_requests: int
     local_responses: int
     cloud_responses: int
     escalations: int
@@ -185,6 +192,12 @@ class RouterStatsResponse(BaseModel):
     cloud_response_rate: float
     escalation_rate: float
     verification_failure_rate: float
+    avg_total_latency_ms: float
+    avg_chat_latency_ms: float
+    avg_embedding_latency_ms: float
+    avg_local_latency_ms: float
+    avg_cloud_latency_ms: float
+    avg_completion_tokens_per_second: float
 
 
 class PrivacyDetectionResult(BaseModel):
@@ -196,12 +209,15 @@ class PrivacyDetectionResult(BaseModel):
 
 class RouteLogEntry(BaseModel):
     request_id: str
+    request_kind: str
     task_preview: str
     private: bool
     auto_private: bool
     estimated_request_cost_usd: float
     estimated_baseline_cloud_cost_usd: float
     estimated_cost_saved_usd: float
+    total_latency_ms: float | None = None
+    completion_tokens_per_second: float | None = None
     trace: DecisionTrace
 
 
@@ -213,6 +229,11 @@ class ModelCard(BaseModel):
     id: str
     object: str = "model"
     owned_by: str
+    provider: str | None = None
+    source: str | None = None
+    installed: bool | None = None
+    status: str | None = None
+    size_bytes: int | None = None
 
 
 class ModelsListResponse(BaseModel):

@@ -56,6 +56,7 @@ class ChatService:
     def create_chat_completion(
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:
+        started = time.perf_counter()
         request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         task = _task_from_messages(request)
         privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
@@ -112,12 +113,21 @@ class ChatService:
             result=result,
             trace=trace,
         )
+        total_latency_ms = _elapsed_ms(started)
+        completion_tokens_per_second = _completion_tokens_per_second(
+            response.usage.completion_tokens, total_latency_ms
+        )
+        trace.total_latency_ms = total_latency_ms
+        trace.completion_tokens_per_second = completion_tokens_per_second
         self.telemetry.record(
             request_id=request_id,
+            request_kind="chat",
             task_preview=_task_preview(task),
             trace=trace,
             is_private=effective_private,
             auto_private=privacy.detected and not request.private,
+            total_latency_ms=total_latency_ms,
+            completion_tokens_per_second=completion_tokens_per_second,
         )
         return response
 
@@ -140,16 +150,36 @@ class ChatService:
         return RouteDecision(**payload)
 
     def create_embeddings(self, request: EmbeddingsRequest) -> EmbeddingsResponse:
+        started = time.perf_counter()
+        request_id = f"embd-{uuid.uuid4().hex[:24]}"
         task = _task_from_embedding_input(request.input)
         privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
         effective_private = request.private or privacy.forced_local
         route = self.router.decide(RouteRequest(task=task, private=effective_private))
         requested_model = _requested_model_override(request.model)
+        trace = DecisionTrace(
+            privacy=privacy,
+            initial_route=route,
+            final_route=route,
+        )
         final_route, result = self._execute_embeddings_route_or_fallback(
             request=request,
             route=route,
+            trace=trace,
             requested_model=requested_model,
             allow_cross_target_fallback=not effective_private,
+        )
+        trace.final_route = final_route
+        total_latency_ms = _elapsed_ms(started)
+        trace.total_latency_ms = total_latency_ms
+        self.telemetry.record(
+            request_id=request_id,
+            request_kind="embeddings",
+            task_preview=_task_preview(task),
+            trace=trace,
+            is_private=effective_private,
+            auto_private=privacy.detected and not request.private,
+            total_latency_ms=total_latency_ms,
         )
         return EmbeddingsResponse(
             data=result.data,
@@ -159,42 +189,136 @@ class ChatService:
         )
 
     def list_models(self) -> ModelsListResponse:
+        ollama_inventory = self._ollama_model_inventory()
+        installed_lookup = {
+            item["id"]: item for item in ollama_inventory
+        }
         models = [
-            ModelCard(id="route-auto", owned_by="routelabs"),
+            ModelCard(
+                id="route-auto",
+                owned_by="routelabs",
+                provider="routelabs",
+                source="virtual",
+                installed=True,
+                status="ready",
+            ),
             ModelCard(
                 id=self.config.providers.local.ollama.model,
                 owned_by="routelabs-local",
+                provider="ollama",
+                source="configured",
+                installed=self.config.providers.local.ollama.model in installed_lookup,
+                status=(
+                    "installed"
+                    if self.config.providers.local.ollama.model in installed_lookup
+                    else "configured"
+                ),
+                size_bytes=installed_lookup.get(
+                    self.config.providers.local.ollama.model, {}
+                ).get("size_bytes"),
             ),
             ModelCard(
                 id=self.config.providers.local.ollama.embedding_model
                 or self.config.providers.local.ollama.model,
                 owned_by="routelabs-local",
+                provider="ollama",
+                source="configured",
+                installed=(
+                    (
+                        self.config.providers.local.ollama.embedding_model
+                        or self.config.providers.local.ollama.model
+                    )
+                    in installed_lookup
+                ),
+                status=(
+                    "installed"
+                    if (
+                        self.config.providers.local.ollama.embedding_model
+                        or self.config.providers.local.ollama.model
+                    )
+                    in installed_lookup
+                    else "configured"
+                ),
+                size_bytes=installed_lookup.get(
+                    self.config.providers.local.ollama.embedding_model
+                    or self.config.providers.local.ollama.model,
+                    {},
+                ).get("size_bytes"),
             ),
             ModelCard(
                 id=self.config.providers.local.llamacpp.model,
                 owned_by="routelabs-local",
+                provider="llamacpp",
+                source="configured",
+                installed=None,
+                status="configured",
             ),
             ModelCard(
                 id=self.config.providers.local.llamacpp.embedding_model
                 or self.config.providers.local.llamacpp.model,
                 owned_by="routelabs-local",
+                provider="llamacpp",
+                source="configured",
+                installed=None,
+                status="configured",
             ),
             ModelCard(
                 id=self.config.providers.cloud.openai_compatible.model,
                 owned_by="routelabs-cloud",
+                provider="openai-compatible",
+                source="configured",
+                installed=self.config.providers.cloud.openai_compatible.api_key is not None,
+                status=(
+                    "configured"
+                    if self.config.providers.cloud.openai_compatible.api_key
+                    else "not_configured"
+                ),
             ),
             ModelCard(
                 id=self.config.providers.cloud.openai_compatible.embedding_model
                 or self.config.providers.cloud.openai_compatible.model,
                 owned_by="routelabs-cloud",
+                provider="openai-compatible",
+                source="configured",
+                installed=self.config.providers.cloud.openai_compatible.api_key is not None,
+                status=(
+                    "configured"
+                    if self.config.providers.cloud.openai_compatible.api_key
+                    else "not_configured"
+                ),
             ),
         ]
+        models.extend(
+            ModelCard(
+                id=item["id"],
+                owned_by="routelabs-local",
+                provider="ollama",
+                source="installed",
+                installed=True,
+                status="installed",
+                size_bytes=item.get("size_bytes"),
+            )
+            for item in ollama_inventory
+        )
         deduped: list[ModelCard] = []
-        seen: set[str] = set()
+        seen: dict[str, int] = {}
         for model in models:
             if model.id in seen:
+                index = seen[model.id]
+                existing = deduped[index]
+                deduped[index] = existing.model_copy(
+                    update={
+                        "installed": model.installed
+                        if model.installed is not None
+                        else existing.installed,
+                        "status": model.status or existing.status,
+                        "size_bytes": model.size_bytes or existing.size_bytes,
+                        "provider": existing.provider or model.provider,
+                        "source": existing.source or model.source,
+                    }
+                )
                 continue
-            seen.add(model.id)
+            seen[model.id] = len(deduped)
             deduped.append(model)
         return ModelsListResponse(data=deduped)
 
@@ -250,6 +374,7 @@ class ChatService:
         self,
         request: EmbeddingsRequest,
         route: RouteDecision,
+        trace: DecisionTrace,
         requested_model: str | None,
         allow_cross_target_fallback: bool,
     ) -> tuple[RouteDecision, ProviderEmbeddingResult]:
@@ -257,15 +382,22 @@ class ChatService:
             return route, self._execute_embeddings_route(
                 request=request,
                 route=route,
+                trace=trace,
                 requested_model=requested_model,
             )
         except HTTPException as exc:
             if not allow_cross_target_fallback or route.target != "local":
                 raise exc
             fallback_route = self._cloud_route(route.complexity)
+            trace.escalated = True
+            trace.escalation_reason = (
+                "local embeddings provider was unavailable, falling back to cloud"
+            )
+            trace.final_route = fallback_route
             return fallback_route, self._execute_embeddings_route(
                 request=request,
                 route=fallback_route,
+                trace=trace,
                 requested_model=requested_model,
             )
 
@@ -273,6 +405,7 @@ class ChatService:
         self,
         request: EmbeddingsRequest,
         route: RouteDecision,
+        trace: DecisionTrace,
         requested_model: str | None,
     ) -> ProviderEmbeddingResult:
         provider = self.providers.get(route.provider)
@@ -290,11 +423,33 @@ class ChatService:
         model_name = requested_model or self._provider_embedding_model(route.provider)
         retries = max(1, self._provider_retries(route.provider))
         last_error: str | None = None
-        for _ in range(retries):
+        for attempt_number in range(1, retries + 1):
+            attempt_started = time.perf_counter()
             try:
-                return provider.embed(request, model=model_name)
+                result = provider.embed(request, model=model_name)
+                trace.attempts.append(
+                    ProviderAttempt(
+                        provider=route.provider,
+                        model=result.model,
+                        target=route.target,
+                        outcome="success",
+                        reason=f"attempt {attempt_number}",
+                        duration_ms=_elapsed_ms(attempt_started),
+                    )
+                )
+                return result
             except ProviderExecutionError as exc:
                 last_error = exc.reason
+                trace.attempts.append(
+                    ProviderAttempt(
+                        provider=route.provider,
+                        model=model_name,
+                        target=route.target,
+                        outcome="failure",
+                        reason=f"attempt {attempt_number}: {exc.reason}",
+                        duration_ms=_elapsed_ms(attempt_started),
+                    )
+                )
 
         status_code = 502 if route.target == "cloud" else 503
         raise HTTPException(
@@ -349,6 +504,7 @@ class ChatService:
         retries = max(1, self._provider_retries(route.provider))
         last_error: str | None = None
         for attempt_number in range(1, retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 result = provider.complete(request, model=model_name)
                 trace.attempts.append(
@@ -358,6 +514,7 @@ class ChatService:
                         target=route.target,
                         outcome="success",
                         reason=f"attempt {attempt_number}",
+                        duration_ms=_elapsed_ms(attempt_started),
                     )
                 )
                 return result
@@ -370,6 +527,7 @@ class ChatService:
                         target=route.target,
                         outcome="failure",
                         reason=f"attempt {attempt_number}: {exc.reason}",
+                        duration_ms=_elapsed_ms(attempt_started),
                     )
                 )
 
@@ -409,6 +567,33 @@ class ChatService:
     def _provider_health(self, provider_name: str) -> ProviderHealth:
         available, status = self._provider_readiness(provider_name)
         return ProviderHealth(available=available, status=status)
+
+    def _ollama_model_inventory(self) -> list[dict[str, object]]:
+        provider = self.providers.get("ollama")
+        if provider is not None and not isinstance(provider, OllamaChatAdapter):
+            return []
+        base_url = self.config.providers.local.ollama.base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                response = client.get(f"{base_url}/api/tags")
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPError, ValueError):
+            return []
+
+        models = data.get("models", [])
+        inventory: list[dict[str, object]] = []
+        for item in models:
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            inventory.append(
+                {
+                    "id": name,
+                    "size_bytes": int(item.get("size", 0) or 0) or None,
+                }
+            )
+        return inventory
 
     def _provider_readiness(self, provider_name: str) -> tuple[bool, str]:
         if provider_name == "ollama":
@@ -492,3 +677,15 @@ def _requested_model_override(model: str | None) -> str | None:
     if model in {"route-auto", "auto"}:
         return None
     return model
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 3)
+
+
+def _completion_tokens_per_second(
+    completion_tokens: int, total_latency_ms: float
+) -> float | None:
+    if completion_tokens <= 0 or total_latency_ms <= 0:
+        return None
+    return round(completion_tokens / (total_latency_ms / 1000), 3)
