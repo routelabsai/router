@@ -11,6 +11,7 @@ from routelabs_router.models import (
     ChatCompletionResponse,
     EmbeddingsRequest,
     EmbeddingsResponse,
+    HealthResponse,
     ModelsListResponse,
     RouteLogResponse,
     RouteDecision,
@@ -31,12 +32,12 @@ def create_app(
     app = FastAPI(title="RouteLabs Router", version="0.1.3")
 
     @app.get("/healthz")
-    def healthcheck() -> dict[str, str]:
-        return {"status": "ok"}
+    def healthcheck() -> HealthResponse:
+        return chat_service.health()
 
     @app.post("/v1/route", response_model=RouteDecision)
     def route(request: RouteRequest) -> RouteDecision:
-        return engine.decide(request)
+        return chat_service.inspect_route(request)
 
     @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
     def chat_completions(

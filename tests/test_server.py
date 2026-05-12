@@ -136,6 +136,8 @@ def test_route_endpoint_returns_provider_metadata() -> None:
     data = response.json()
     assert data["target"] == "local"
     assert data["provider"] == "ollama"
+    assert "provider_available" in data
+    assert "provider_status" in data
 
 
 def test_chat_completions_uses_local_provider() -> None:
@@ -223,6 +225,44 @@ def test_embeddings_fall_back_to_cloud_when_local_provider_fails() -> None:
     assert data["route"]["provider"] == "openai-compatible"
     assert data["model"] == DEFAULT_CONFIG.providers.cloud.openai_compatible.embedding_model
     assert data["data"][0]["embedding"] == [1.1, 1.2]
+
+
+def test_embeddings_return_clear_not_configured_error_for_cloud_fallback() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FailingLocalProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/embeddings",
+        json={"input": "hello world", "private": False},
+    )
+
+    assert response.status_code == 501
+    assert "not configured for embeddings" in response.json()["detail"]
+
+
+def test_healthz_reports_provider_statuses() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "providers" in data
+    assert "ollama" in data["providers"]
+    assert "available" in data["providers"]["ollama"]
+    assert "status" in data["providers"]["ollama"]
 
 
 def test_chat_completions_treats_route_auto_as_router_selected_model() -> None:

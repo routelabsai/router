@@ -15,6 +15,10 @@ class RouteDecision(BaseModel):
     reason: str
     complexity: str
     verify: bool
+    provider_available: bool | None = None
+    provider_status: str | None = None
+    fallback_available: bool | None = None
+    fallback_status: str | None = None
 
 
 class ChatMessage(BaseModel):
@@ -214,6 +218,16 @@ class ModelCard(BaseModel):
 class ModelsListResponse(BaseModel):
     object: str = "list"
     data: list[ModelCard]
+
+
+class ProviderHealth(BaseModel):
+    available: bool
+    status: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    providers: dict[str, ProviderHealth]
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:

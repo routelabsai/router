@@ -1,6 +1,7 @@
 import time
 import uuid
 
+import httpx
 from fastapi import HTTPException
 
 from routelabs_router.adapters.base import (
@@ -19,8 +20,10 @@ from routelabs_router.models import (
     DecisionTrace,
     EmbeddingsRequest,
     EmbeddingsResponse,
+    HealthResponse,
     ModelCard,
     ModelsListResponse,
+    ProviderHealth,
     ProviderEmbeddingResult,
     ProviderResult,
     ProviderAttempt,
@@ -118,6 +121,24 @@ class ChatService:
         )
         return response
 
+    def inspect_route(self, request: RouteRequest) -> RouteDecision:
+        decision = self.router.decide(request)
+        available, status = self._provider_readiness(decision.provider)
+        fallback_available, fallback_status = self._provider_readiness(
+            self.config.providers.cloud.default
+        )
+        if decision.target == "cloud":
+            fallback_available = None
+            fallback_status = None
+        payload = decision.model_dump()
+        payload.update(
+            provider_available=available,
+            provider_status=status,
+            fallback_available=fallback_available,
+            fallback_status=fallback_status,
+        )
+        return RouteDecision(**payload)
+
     def create_embeddings(self, request: EmbeddingsRequest) -> EmbeddingsResponse:
         task = _task_from_embedding_input(request.input)
         privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
@@ -177,6 +198,17 @@ class ChatService:
             deduped.append(model)
         return ModelsListResponse(data=deduped)
 
+    def health(self) -> HealthResponse:
+        providers = {
+            self.config.providers.local.default: self._provider_health(
+                self.config.providers.local.default
+            ),
+            self.config.providers.cloud.default: self._provider_health(
+                self.config.providers.cloud.default
+            ),
+        }
+        return HealthResponse(status="ok", providers=providers)
+
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
             "ollama": OllamaChatAdapter(self.config.providers.local.ollama),
@@ -232,7 +264,12 @@ class ChatService:
         requested_model: str | None,
     ) -> ProviderEmbeddingResult:
         provider = self.providers.get(route.provider)
-        if provider is None or not isinstance(provider, EmbeddingProvider):
+        if provider is None:
+            raise HTTPException(
+                status_code=501,
+                detail=f"provider '{route.provider}' is not configured for embeddings",
+            )
+        if not isinstance(provider, EmbeddingProvider):
             raise HTTPException(
                 status_code=501,
                 detail=f"provider '{route.provider}' does not support embeddings",
@@ -356,6 +393,28 @@ class ChatService:
                 or self.config.providers.cloud.openai_compatible.model
             )
         return "unknown"
+
+    def _provider_health(self, provider_name: str) -> ProviderHealth:
+        available, status = self._provider_readiness(provider_name)
+        return ProviderHealth(available=available, status=status)
+
+    def _provider_readiness(self, provider_name: str) -> tuple[bool, str]:
+        if provider_name == "ollama":
+            base_url = self.config.providers.local.ollama.base_url.rstrip("/")
+            try:
+                with httpx.Client(timeout=1.0) as client:
+                    response = client.get(f"{base_url}/api/tags")
+                    response.raise_for_status()
+                return True, "ready"
+            except httpx.HTTPError:
+                return False, "unreachable"
+
+        if provider_name == "openai-compatible":
+            if not self.config.providers.cloud.openai_compatible.api_key:
+                return False, "not_configured"
+            return True, "configured"
+
+        return False, "unknown"
 
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:
