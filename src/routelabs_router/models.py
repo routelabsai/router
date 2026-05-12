@@ -28,6 +28,18 @@ class ChatCompletionRequest(BaseModel):
     private: bool = False
 
 
+class EmbeddingsRequest(BaseModel):
+    input: str | list[str]
+    model: str | None = None
+    private: bool = False
+
+
+class EmbeddingObject(BaseModel):
+    object: str = "embedding"
+    index: int
+    embedding: list[float]
+
+
 class ChatCompletionChoice(BaseModel):
     index: int
     message: ChatMessage
@@ -40,6 +52,11 @@ class ChatCompletionUsage(BaseModel):
     total_tokens: int = 0
 
 
+class EmbeddingsUsage(BaseModel):
+    prompt_tokens: int = 0
+    total_tokens: int = 0
+
+
 class ChatCompletionResponse(BaseModel):
     id: str
     object: str = "chat.completion"
@@ -49,6 +66,20 @@ class ChatCompletionResponse(BaseModel):
     usage: ChatCompletionUsage
     route: RouteDecision
     trace: "DecisionTrace"
+
+
+class EmbeddingsResponse(BaseModel):
+    object: str = "list"
+    data: list[EmbeddingObject]
+    model: str
+    usage: EmbeddingsUsage
+    route: RouteDecision
+
+
+class ProviderEmbeddingResult(BaseModel):
+    data: list[EmbeddingObject]
+    model: str
+    usage: EmbeddingsUsage
 
 
 class ProviderResult(BaseModel):

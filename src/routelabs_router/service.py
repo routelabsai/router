@@ -3,7 +3,11 @@ import uuid
 
 from fastapi import HTTPException
 
-from routelabs_router.adapters.base import ChatProvider, ProviderExecutionError
+from routelabs_router.adapters.base import (
+    ChatProvider,
+    EmbeddingProvider,
+    ProviderExecutionError,
+)
 from routelabs_router.adapters.ollama import OllamaChatAdapter
 from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import Config
@@ -13,8 +17,11 @@ from routelabs_router.models import (
     ChatCompletionResponse,
     ChatMessage,
     DecisionTrace,
+    EmbeddingsRequest,
+    EmbeddingsResponse,
     ModelCard,
     ModelsListResponse,
+    ProviderEmbeddingResult,
     ProviderResult,
     ProviderAttempt,
     RouteDecision,
@@ -107,6 +114,25 @@ class ChatService:
         )
         return response
 
+    def create_embeddings(self, request: EmbeddingsRequest) -> EmbeddingsResponse:
+        task = _task_from_embedding_input(request.input)
+        privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
+        effective_private = request.private or privacy.forced_local
+        route = self.router.decide(RouteRequest(task=task, private=effective_private))
+        requested_model = _requested_model_override(request.model)
+        final_route, result = self._execute_embeddings_route_or_fallback(
+            request=request,
+            route=route,
+            requested_model=requested_model,
+            allow_cross_target_fallback=not effective_private,
+        )
+        return EmbeddingsResponse(
+            data=result.data,
+            model=result.model,
+            usage=result.usage,
+            route=RouteDecision(**{**final_route.model_dump(), "model": result.model, "verify": False}),
+        )
+
     def list_models(self) -> ModelsListResponse:
         models = [
             ModelCard(id="route-auto", owned_by="routelabs"),
@@ -115,11 +141,26 @@ class ChatService:
                 owned_by="routelabs-local",
             ),
             ModelCard(
+                id=self.config.providers.local.ollama.embedding_model
+                or self.config.providers.local.ollama.model,
+                owned_by="routelabs-local",
+            ),
+            ModelCard(
                 id=self.config.providers.local.llamacpp.model,
                 owned_by="routelabs-local",
             ),
             ModelCard(
+                id=self.config.providers.local.llamacpp.embedding_model
+                or self.config.providers.local.llamacpp.model,
+                owned_by="routelabs-local",
+            ),
+            ModelCard(
                 id=self.config.providers.cloud.openai_compatible.model,
+                owned_by="routelabs-cloud",
+            ),
+            ModelCard(
+                id=self.config.providers.cloud.openai_compatible.embedding_model
+                or self.config.providers.cloud.openai_compatible.model,
                 owned_by="routelabs-cloud",
             ),
         ]
@@ -156,6 +197,57 @@ class ChatService:
 
     def get_recent_logs(self):
         return self.telemetry.recent_logs()
+
+    def _execute_embeddings_route_or_fallback(
+        self,
+        request: EmbeddingsRequest,
+        route: RouteDecision,
+        requested_model: str | None,
+        allow_cross_target_fallback: bool,
+    ) -> tuple[RouteDecision, ProviderEmbeddingResult]:
+        try:
+            return route, self._execute_embeddings_route(
+                request=request,
+                route=route,
+                requested_model=requested_model,
+            )
+        except HTTPException as exc:
+            if not allow_cross_target_fallback or route.target != "local":
+                raise exc
+            fallback_route = self._cloud_route(route.complexity)
+            return fallback_route, self._execute_embeddings_route(
+                request=request,
+                route=fallback_route,
+                requested_model=requested_model,
+            )
+
+    def _execute_embeddings_route(
+        self,
+        request: EmbeddingsRequest,
+        route: RouteDecision,
+        requested_model: str | None,
+    ) -> ProviderEmbeddingResult:
+        provider = self.providers.get(route.provider)
+        if provider is None or not isinstance(provider, EmbeddingProvider):
+            raise HTTPException(
+                status_code=501,
+                detail=f"provider '{route.provider}' does not support embeddings",
+            )
+
+        model_name = requested_model or self._provider_embedding_model(route.provider)
+        retries = max(1, self._provider_retries(route.provider))
+        last_error: str | None = None
+        for _ in range(retries):
+            try:
+                return provider.embed(request, model=model_name)
+            except ProviderExecutionError as exc:
+                last_error = exc.reason
+
+        status_code = 502 if route.target == "cloud" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"{route.provider} embeddings failed after {retries} attempt(s): {last_error or 'unknown error'}",
+        )
 
     def _execute_route_or_fallback(
         self,
@@ -243,6 +335,24 @@ class ChatService:
             return self.config.providers.cloud.openai_compatible.max_retries
         return 1
 
+    def _provider_embedding_model(self, provider_name: str) -> str:
+        if provider_name == "ollama":
+            return (
+                self.config.providers.local.ollama.embedding_model
+                or self.config.providers.local.ollama.model
+            )
+        if provider_name == "llamacpp":
+            return (
+                self.config.providers.local.llamacpp.embedding_model
+                or self.config.providers.local.llamacpp.model
+            )
+        if provider_name == "openai-compatible":
+            return (
+                self.config.providers.cloud.openai_compatible.embedding_model
+                or self.config.providers.cloud.openai_compatible.model
+            )
+        return "unknown"
+
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:
     user_messages = [
@@ -281,6 +391,12 @@ def _task_preview(task: str, limit: int = 120) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
+
+
+def _task_from_embedding_input(value: str | list[str]) -> str:
+    if isinstance(value, str):
+        return value
+    return " ".join(value)
 
 
 def _requested_model_override(model: str | None) -> str | None:

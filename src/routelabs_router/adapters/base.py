@@ -1,6 +1,11 @@
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
-from routelabs_router.models import ChatCompletionRequest, ProviderResult
+from routelabs_router.models import (
+    ChatCompletionRequest,
+    EmbeddingsRequest,
+    ProviderEmbeddingResult,
+    ProviderResult,
+)
 
 
 class ProviderExecutionError(RuntimeError):
@@ -15,3 +20,11 @@ class ChatProvider(Protocol):
         self, request: ChatCompletionRequest, model: str | None = None
     ) -> ProviderResult:
         """Execute a chat completion request."""
+
+
+@runtime_checkable
+class EmbeddingProvider(Protocol):
+    def embed(
+        self, request: EmbeddingsRequest, model: str | None = None
+    ) -> ProviderEmbeddingResult:
+        """Execute an embeddings request."""

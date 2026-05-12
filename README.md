@@ -104,6 +104,7 @@ It is for teams who want:
 
 - one API for hybrid local + cloud inference
 - OpenAI-compatible model discovery for existing SDKs and UIs
+- embeddings support for retrieval and RAG-style workflows
 - verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
@@ -248,6 +249,7 @@ This is an early but usable product foundation. The repository already includes:
 - YAML config loading
 - route inspection endpoint
 - OpenAI-style `/v1/chat/completions` endpoint
+- OpenAI-style `/v1/embeddings` endpoint
 - OpenAI-compatible `/v1/models` discovery endpoint
 - real local execution through `Ollama`
 - generic OpenAI-compatible cloud execution
@@ -392,6 +394,17 @@ Model discovery:
 curl http://127.0.0.1:8000/v1/models
 ```
 
+Embeddings:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input":"RouteLabs Router chooses between local and cloud models based on privacy and task complexity.",
+    "private":false
+  }'
+```
+
 ### Python client
 
 You can also call the router from Python:
@@ -409,6 +422,9 @@ chat = client.chat(
             "content": "Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity.",
         }
     ]
+)
+embeddings = client.embeddings(
+    "RouteLabs Router chooses between local and cloud models based on privacy and task complexity."
 )
 stats = client.stats()
 logs = client.logs()
@@ -476,6 +492,7 @@ The logs endpoint exposes recent request-level decisions so users can inspect pr
 RouteLabs now exposes the two OpenAI-style endpoints many existing tools check first:
 
 - `/v1/chat/completions`
+- `/v1/embeddings`
 - `/v1/models`
 
 That makes it easier to place RouteLabs in front of:

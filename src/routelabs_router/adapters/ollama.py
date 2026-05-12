@@ -4,7 +4,14 @@ import httpx
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
-from routelabs_router.models import ChatCompletionRequest, ProviderResult
+from routelabs_router.models import (
+    ChatCompletionRequest,
+    EmbeddingObject,
+    EmbeddingsRequest,
+    EmbeddingsUsage,
+    ProviderEmbeddingResult,
+    ProviderResult,
+)
 
 
 class OllamaChatAdapter:
@@ -43,6 +50,43 @@ class OllamaChatAdapter:
             finish_reason="stop",
             usage=usage,
             raw=data,
+        )
+
+    def embed(
+        self, request: EmbeddingsRequest, model: str | None = None
+    ) -> ProviderEmbeddingResult:
+        payload = {
+            "model": model or request.model or self.config.embedding_model or self.config.model,
+            "input": request.input,
+        }
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.config.base_url.rstrip('/')}/api/embed",
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError("ollama", "request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderExecutionError("ollama", str(exc)) from exc
+
+        embeddings = data.get("embeddings") or []
+        if embeddings and isinstance(embeddings[0], (int, float)):
+            embeddings = [embeddings]
+        items = [
+            EmbeddingObject(index=index, embedding=[float(value) for value in vector])
+            for index, vector in enumerate(embeddings)
+        ]
+        usage = EmbeddingsUsage(
+            prompt_tokens=int(data.get("prompt_eval_count", 0) or 0),
+            total_tokens=int(data.get("prompt_eval_count", 0) or 0),
+        )
+        return ProviderEmbeddingResult(
+            data=items,
+            model=str(data.get("model", payload["model"])),
+            usage=usage,
         )
 
 

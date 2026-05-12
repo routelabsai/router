@@ -48,6 +48,7 @@ Today the repository supports:
 
 - `/v1/route` for route inspection
 - `/v1/chat/completions` for OpenAI-style chat requests
+- `/v1/embeddings` for OpenAI-style embeddings requests
 - `/v1/models` for OpenAI-compatible model discovery
 - `/v1/stats` for simple routing telemetry
 - `/v1/logs` for recent request-level route logs
@@ -62,6 +63,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - local routes execute through `Ollama`
 - cloud routes execute through a generic OpenAI-compatible adapter when an API key is configured
 - local provider failures can fall back to the cloud when policy allows it
+- embeddings requests use the same local-first policy with cloud fallback when privacy allows it
 - verification can escalate weak local responses to the cloud when configured
 - if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency

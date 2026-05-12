@@ -6,6 +6,8 @@ from routelabs_router.config import load_config
 from routelabs_router.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
+    EmbeddingsRequest,
+    EmbeddingsResponse,
     ModelsListResponse,
     RouteLogResponse,
     RouteDecision,
@@ -23,7 +25,7 @@ def create_app(
     config = load_config(resolved_path)
     engine = RouterEngine(config)
     chat_service = service or ChatService(config, router=engine)
-    app = FastAPI(title="RouteLabs Router", version="0.1.1")
+    app = FastAPI(title="RouteLabs Router", version="0.1.3")
 
     @app.get("/healthz")
     def healthcheck() -> dict[str, str]:
@@ -36,6 +38,10 @@ def create_app(
     @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
     def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
         return chat_service.create_chat_completion(request)
+
+    @app.post("/v1/embeddings", response_model=EmbeddingsResponse)
+    def embeddings(request: EmbeddingsRequest) -> EmbeddingsResponse:
+        return chat_service.create_embeddings(request)
 
     @app.get("/v1/models", response_model=ModelsListResponse)
     def list_models() -> ModelsListResponse:

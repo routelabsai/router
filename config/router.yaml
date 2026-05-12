@@ -13,11 +13,13 @@ providers:
     ollama:
       base_url: "http://127.0.0.1:11434"
       model: "qwen3:4b"
+      embedding_model: "embeddinggemma"
       timeout_seconds: 60
       max_retries: 2
     llamacpp:
       base_url: "http://127.0.0.1:8080"
       model: "qwen3-4b-instruct"
+      embedding_model: "qwen3-embedding"
       timeout_seconds: 60
       max_retries: 1
   cloud:
@@ -25,6 +27,7 @@ providers:
     openai_compatible:
       base_url: "https://api.openai.com/v1"
       model: "gpt-4.1-mini"
+      embedding_model: "text-embedding-3-small"
       api_key_env: "OPENAI_API_KEY"
       timeout_seconds: 60
       max_retries: 2

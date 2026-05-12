@@ -33,6 +33,20 @@ class RouteLabsClient:
             payload["model"] = model
         return self._request("POST", "/v1/chat/completions", json=payload)
 
+    def embeddings(
+        self,
+        input: str | list[str],
+        private: bool = False,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "input": input,
+            "private": private,
+        }
+        if model is not None:
+            payload["model"] = model
+        return self._request("POST", "/v1/embeddings", json=payload)
+
     def stats(self) -> dict[str, Any]:
         return self._request("GET", "/v1/stats")
 

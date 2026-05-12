@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class ProviderConfig(BaseModel):
     base_url: str
     model: str
+    embedding_model: str | None = None
     api_key_env: str | None = None
     api_key: str | None = None
     timeout_seconds: float = 60.0
@@ -85,10 +86,12 @@ DEFAULT_CONFIG = Config.model_validate(
                 "ollama": {
                     "base_url": "http://127.0.0.1:11434",
                     "model": "qwen3:4b",
+                    "embedding_model": "embeddinggemma",
                 },
                 "llamacpp": {
                     "base_url": "http://127.0.0.1:8080",
                     "model": "qwen3-4b-instruct",
+                    "embedding_model": "qwen3-embedding",
                 },
             },
             "cloud": {
@@ -96,6 +99,7 @@ DEFAULT_CONFIG = Config.model_validate(
                 "openai_compatible": {
                     "base_url": "https://api.openai.com/v1",
                     "model": "gpt-4.1-mini",
+                    "embedding_model": "text-embedding-3-small",
                     "api_key_env": "OPENAI_API_KEY",
                 },
             },

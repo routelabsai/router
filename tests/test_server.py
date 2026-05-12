@@ -2,7 +2,14 @@ from fastapi.testclient import TestClient
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import DEFAULT_CONFIG
-from routelabs_router.models import ChatCompletionRequest, ProviderResult
+from routelabs_router.models import (
+    ChatCompletionRequest,
+    EmbeddingObject,
+    EmbeddingsRequest,
+    EmbeddingsUsage,
+    ProviderEmbeddingResult,
+    ProviderResult,
+)
 from routelabs_router.router import RouterEngine
 from routelabs_router.server.app import create_app
 from routelabs_router.service import ChatService
@@ -17,6 +24,19 @@ class FakeProvider:
             model=model or "fake-local-model",
         )
 
+    def embed(
+        self, request: EmbeddingsRequest, model: str | None = None
+    ) -> ProviderEmbeddingResult:
+        inputs = request.input if isinstance(request.input, list) else [request.input]
+        return ProviderEmbeddingResult(
+            data=[
+                EmbeddingObject(index=index, embedding=[0.1 + index, 0.2 + index])
+                for index, _ in enumerate(inputs)
+            ],
+            model=model or "fake-local-embedding-model",
+            usage=EmbeddingsUsage(prompt_tokens=len(inputs), total_tokens=len(inputs)),
+        )
+
 
 class FakeCloudProvider:
     def complete(
@@ -25,6 +45,19 @@ class FakeCloudProvider:
         return ProviderResult(
             content="cloud: architecture answer",
             model=model or "fake-cloud-model",
+        )
+
+    def embed(
+        self, request: EmbeddingsRequest, model: str | None = None
+    ) -> ProviderEmbeddingResult:
+        inputs = request.input if isinstance(request.input, list) else [request.input]
+        return ProviderEmbeddingResult(
+            data=[
+                EmbeddingObject(index=index, embedding=[1.1 + index, 1.2 + index])
+                for index, _ in enumerate(inputs)
+            ],
+            model=model or "fake-cloud-embedding-model",
+            usage=EmbeddingsUsage(prompt_tokens=len(inputs), total_tokens=len(inputs)),
         )
 
 
@@ -42,6 +75,11 @@ class FailingLocalProvider:
     def complete(
         self, request: ChatCompletionRequest, model: str | None = None
     ) -> ProviderResult:
+        raise ProviderExecutionError("ollama", "connection refused")
+
+    def embed(
+        self, request: EmbeddingsRequest, model: str | None = None
+    ) -> ProviderEmbeddingResult:
         raise ProviderExecutionError("ollama", "connection refused")
 
 
@@ -119,6 +157,51 @@ def test_models_endpoint_lists_route_auto_and_configured_models() -> None:
     assert "route-auto" in model_ids
     assert DEFAULT_CONFIG.providers.local.ollama.model in model_ids
     assert DEFAULT_CONFIG.providers.cloud.openai_compatible.model in model_ids
+    assert DEFAULT_CONFIG.providers.local.ollama.embedding_model in model_ids
+    assert DEFAULT_CONFIG.providers.cloud.openai_compatible.embedding_model in model_ids
+
+
+def test_embeddings_use_local_provider_by_default() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/embeddings",
+        json={"input": "hello world", "private": False},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "ollama"
+    assert data["model"] == DEFAULT_CONFIG.providers.local.ollama.embedding_model
+    assert len(data["data"]) == 1
+    assert data["data"][0]["embedding"] == [0.1, 0.2]
+
+
+def test_embeddings_fall_back_to_cloud_when_local_provider_fails() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FailingLocalProvider(), "openai-compatible": FakeCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/embeddings",
+        json={"input": "hello world", "private": False},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "openai-compatible"
+    assert data["model"] == DEFAULT_CONFIG.providers.cloud.openai_compatible.embedding_model
+    assert data["data"][0]["embedding"] == [1.1, 1.2]
 
 
 def test_chat_completions_treats_route_auto_as_router_selected_model() -> None:
