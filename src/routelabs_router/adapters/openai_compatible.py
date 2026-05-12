@@ -26,6 +26,8 @@ class OpenAICompatibleChatAdapter:
             "model": model or request.model or self.config.model,
             "messages": [message.model_dump() for message in request.messages],
         }
+        if request.response_format is not None:
+            payload["response_format"] = request.response_format
         if request.tools is not None:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
@@ -38,6 +40,12 @@ class OpenAICompatibleChatAdapter:
             payload["max_tokens"] = request.max_tokens
         if request.stop is not None:
             payload["stop"] = request.stop
+        if request.seed is not None:
+            payload["seed"] = request.seed
+        if request.frequency_penalty is not None:
+            payload["frequency_penalty"] = request.frequency_penalty
+        if request.presence_penalty is not None:
+            payload["presence_penalty"] = request.presence_penalty
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"

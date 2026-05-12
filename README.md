@@ -107,6 +107,7 @@ It is for teams who want:
 - embeddings support for retrieval and RAG-style workflows
 - tool-calling support for agent workflows
 - OpenAI-style streaming responses for chat completions
+- structured output and common OpenAI request-field passthrough
 - verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
@@ -255,6 +256,7 @@ This is an early but usable product foundation. The repository already includes:
 - OpenAI-compatible `/v1/models` discovery endpoint
 - tool-call passthrough for OpenAI-style clients
 - OpenAI-style SSE streaming on `/v1/chat/completions`
+- structured-output passthrough and JSON-mode support
 - real local execution through `Ollama`
 - generic OpenAI-compatible cloud execution
 - first verification-aware escalation loop
@@ -539,6 +541,35 @@ curl -N -X POST http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 This currently exposes an OpenAI-style SSE stream from the RouteLabs API layer so existing clients can consume streamed chunks normally.
+
+### Structured outputs and passthrough
+
+RouteLabs now passes through several common OpenAI chat request fields so existing clients can switch over with fewer changes:
+
+- `response_format`
+- `temperature`
+- `top_p`
+- `max_tokens`
+- `stop`
+- `seed`
+- `frequency_penalty`
+- `presence_penalty`
+
+For local `Ollama` execution, OpenAI-style structured output requests are mapped into Ollama-compatible JSON mode or JSON-schema mode where possible.
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"route-auto",
+    "messages":[{"role":"user","content":"Return a JSON object with keys title and summary for RouteLabs Router."}],
+    "response_format":{"type":"json_object"},
+    "temperature":0.2,
+    "max_tokens":120
+  }'
+```
 
 ### Existing tool compatibility
 

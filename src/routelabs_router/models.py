@@ -31,12 +31,16 @@ class ChatCompletionRequest(BaseModel):
     model: str | None = None
     private: bool = False
     stream: bool = False
+    response_format: dict[str, Any] | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
     stop: str | list[str] | None = None
+    seed: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
 
 
 class EmbeddingsRequest(BaseModel):

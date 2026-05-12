@@ -52,6 +52,7 @@ Today the repository supports:
 - `/v1/models` for OpenAI-compatible model discovery
 - OpenAI-style tool-call passthrough through `/v1/chat/completions`
 - OpenAI-style SSE streaming through `/v1/chat/completions`
+- common OpenAI request-field passthrough and structured-output mapping
 - `/v1/stats` for simple routing telemetry
 - `/v1/logs` for recent request-level route logs
 - `Ollama` as the first real execution backend
@@ -69,6 +70,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 - verification can escalate weak local responses to the cloud when configured
 - tool-calling responses bypass verification escalation and return `tool_calls` directly so agent loops can continue normally
 - streaming currently happens at the RouteLabs API layer after route selection so existing OpenAI-style clients can consume SSE chunks
+- common request controls like `response_format`, `temperature`, `top_p`, `max_tokens`, `stop`, `seed`, and penalties are passed through when supported by the selected backend
 - if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency
 - provider attempts are captured in the trace so users can see failures, retries, and fallback outcomes

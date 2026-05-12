@@ -29,6 +29,9 @@ class OllamaChatAdapter:
             "messages": [_serialize_ollama_message(message) for message in request.messages],
             "stream": False,
         }
+        format_value = _map_ollama_format(request.response_format)
+        if format_value is not None:
+            payload["format"] = format_value
         if request.tools is not None:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
@@ -41,6 +44,18 @@ class OllamaChatAdapter:
             payload["options"] = {**payload.get("options", {}), "stop": request.stop}
         if request.max_tokens is not None:
             payload["options"] = {**payload.get("options", {}), "num_predict": request.max_tokens}
+        if request.seed is not None:
+            payload["options"] = {**payload.get("options", {}), "seed": request.seed}
+        if request.frequency_penalty is not None:
+            payload["options"] = {
+                **payload.get("options", {}),
+                "frequency_penalty": request.frequency_penalty,
+            }
+        if request.presence_penalty is not None:
+            payload["options"] = {
+                **payload.get("options", {}),
+                "presence_penalty": request.presence_penalty,
+            }
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
@@ -143,6 +158,20 @@ def _normalize_arguments(value: Any) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value)
+
+
+def _map_ollama_format(response_format: dict[str, Any] | None) -> str | dict[str, Any] | None:
+    if response_format is None:
+        return None
+    response_type = response_format.get("type")
+    if response_type == "json_object":
+        return "json"
+    if response_type == "json_schema":
+        json_schema = response_format.get("json_schema", {})
+        schema = json_schema.get("schema")
+        if isinstance(schema, dict):
+            return schema
+    return None
 
 
 def _serialize_ollama_message(message: ChatMessage) -> dict[str, Any]:

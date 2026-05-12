@@ -25,12 +25,16 @@ class RouteLabsClient:
         private: bool = False,
         model: str | None = None,
         stream: bool = False,
+        response_format: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         max_tokens: int | None = None,
         stop: str | list[str] | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "messages": messages,
@@ -39,6 +43,8 @@ class RouteLabsClient:
         }
         if model is not None:
             payload["model"] = model
+        if response_format is not None:
+            payload["response_format"] = response_format
         if tools is not None:
             payload["tools"] = tools
         if tool_choice is not None:
@@ -51,6 +57,12 @@ class RouteLabsClient:
             payload["max_tokens"] = max_tokens
         if stop is not None:
             payload["stop"] = stop
+        if seed is not None:
+            payload["seed"] = seed
+        if frequency_penalty is not None:
+            payload["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
         return self._request("POST", "/v1/chat/completions", json=payload)
 
     def embeddings(
