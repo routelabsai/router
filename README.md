@@ -6,6 +6,14 @@
 
 `RouteLabs Router` is a local-first runtime that sits between your app and local/cloud LLMs.
 
+It is designed to feel like a practical gateway, not just a routing idea:
+
+- one OpenAI-compatible endpoint
+- local-first execution with cloud fallback
+- verification-aware escalation
+- privacy-aware local preference
+- startup checks, model visibility, and request-level performance traces
+
 It gives applications one endpoint that can decide:
 
 - when to stay local
@@ -291,6 +299,7 @@ Still early:
 ## More Docs
 
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
 - Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Release guide: [docs/release/README.md](docs/release/README.md)

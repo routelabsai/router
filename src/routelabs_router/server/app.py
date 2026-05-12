@@ -29,7 +29,7 @@ def create_app(
     config = load_config(resolved_path)
     engine = RouterEngine(config)
     chat_service = service or ChatService(config, router=engine)
-    app = FastAPI(title="RouteLabs Router", version="0.1.3")
+    app = FastAPI(title="RouteLabs Router", version="0.2.0")
 
     @app.get("/healthz")
     def healthcheck() -> HealthResponse:
