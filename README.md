@@ -362,6 +362,18 @@ Use one as your active config by copying or merging it into [`config/router.yaml
 router start --reload
 ```
 
+On startup, RouteLabs now prints a quick readiness summary so users can immediately see:
+
+- whether the local provider is reachable
+- whether cloud fallback is configured
+- whether the runtime is `ok`, `degraded`, or `error`
+- what to do next if no provider path is available
+
+Typical first-run warnings include:
+
+- start `Ollama` with `ollama serve` for local execution
+- set `OPENAI_API_KEY` to enable cloud fallback and escalation
+
 For explicit host or port overrides:
 
 ```bash

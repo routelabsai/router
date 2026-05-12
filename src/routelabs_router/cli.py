@@ -7,6 +7,7 @@ from routelabs_router.config import load_config
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
 from routelabs_router.server.app import create_app
+from routelabs_router.service import ChatService
 
 
 def main() -> None:
@@ -49,10 +50,43 @@ def main() -> None:
         print(f"verify: {decision.verify}")
     elif args.command == "start":
         config = load_config(Path(args.config))
+        _print_startup_status(config)
         app = create_app(Path(args.config))
         uvicorn.run(
             app,
             host=args.host or config.server.host,
             port=args.port or config.server.port,
             reload=args.reload,
+        )
+
+
+def _print_startup_status(config) -> None:
+    service = ChatService(config)
+    health = service.health()
+
+    print(f"RouteLabs status: {health.status}")
+
+    local_name = config.providers.local.default
+    cloud_name = config.providers.cloud.default
+    local = health.providers[local_name]
+    cloud = health.providers[cloud_name]
+
+    print(f"Local provider ({local_name}): {local.status}")
+    print(f"Cloud provider ({cloud_name}): {cloud.status}")
+
+    if not local.available:
+        print(
+            f"Warning: local provider '{local_name}' is not ready. "
+            "Start Ollama with `ollama serve` if you want local execution."
+        )
+    if not cloud.available:
+        env_name = config.providers.cloud.openai_compatible.api_key_env or "OPENAI_API_KEY"
+        print(
+            f"Warning: cloud provider '{cloud_name}' is not configured. "
+            f"Set `{env_name}` to enable cloud fallback and escalation."
+        )
+    if health.status == "error":
+        print(
+            "Warning: no execution path is currently available. "
+            "Start a local provider or configure a cloud provider before sending requests."
         )
