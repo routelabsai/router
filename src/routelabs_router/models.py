@@ -30,6 +30,7 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1)
     model: str | None = None
     private: bool = False
+    stream: bool = False
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     temperature: float | None = None

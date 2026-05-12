@@ -1,6 +1,9 @@
+import json
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 
 from routelabs_router.config import load_config
 from routelabs_router.models import (
@@ -36,7 +39,15 @@ def create_app(
         return engine.decide(request)
 
     @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-    def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
+    def chat_completions(
+        request: ChatCompletionRequest,
+    ) -> ChatCompletionResponse | StreamingResponse:
+        if request.stream:
+            response = chat_service.create_chat_completion(request)
+            return StreamingResponse(
+                _stream_chat_completion_chunks(response),
+                media_type="text/event-stream",
+            )
         return chat_service.create_chat_completion(request)
 
     @app.post("/v1/embeddings", response_model=EmbeddingsResponse)
@@ -59,3 +70,62 @@ def create_app(
 
 
 app = create_app()
+
+
+def _stream_chat_completion_chunks(response: ChatCompletionResponse):
+    choice = response.choices[0]
+    base = {
+        "id": response.id,
+        "object": "chat.completion.chunk",
+        "created": response.created,
+        "model": response.model,
+    }
+
+    if choice.message.tool_calls:
+        first_chunk = {
+            **base,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": choice.message.tool_calls,
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+        yield f"data: {json.dumps(first_chunk)}\n\n"
+    else:
+        content = choice.message.content or ""
+        first = True
+        for token in content.split():
+            chunk = {
+                **base,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            **({"role": "assistant"} if first else {}),
+                            "content": token + " ",
+                        },
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            first = False
+            yield f"data: {json.dumps(chunk)}\n\n"
+            time.sleep(0)
+
+    final_chunk = {
+        **base,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {},
+                "finish_reason": choice.finish_reason,
+            }
+        ],
+    }
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"

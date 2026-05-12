@@ -24,6 +24,7 @@ class RouteLabsClient:
         messages: list[dict[str, str]],
         private: bool = False,
         model: str | None = None,
+        stream: bool = False,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         temperature: float | None = None,
@@ -34,6 +35,7 @@ class RouteLabsClient:
         payload: dict[str, Any] = {
             "messages": messages,
             "private": private,
+            "stream": stream,
         }
         if model is not None:
             payload["model"] = model

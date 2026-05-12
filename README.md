@@ -106,6 +106,7 @@ It is for teams who want:
 - OpenAI-compatible model discovery for existing SDKs and UIs
 - embeddings support for retrieval and RAG-style workflows
 - tool-calling support for agent workflows
+- OpenAI-style streaming responses for chat completions
 - verification-aware escalation instead of naive “hard task -> expensive model”
 - transparent routing decisions
 - privacy-aware defaults
@@ -253,6 +254,7 @@ This is an early but usable product foundation. The repository already includes:
 - OpenAI-style `/v1/embeddings` endpoint
 - OpenAI-compatible `/v1/models` discovery endpoint
 - tool-call passthrough for OpenAI-style clients
+- OpenAI-style SSE streaming on `/v1/chat/completions`
 - real local execution through `Ollama`
 - generic OpenAI-compatible cloud execution
 - first verification-aware escalation loop
@@ -519,6 +521,24 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 If the model decides to call a tool, the response returns OpenAI-style `tool_calls` in the assistant message.
+
+### Streaming
+
+RouteLabs now supports OpenAI-style streaming on `/v1/chat/completions` when `stream=true`.
+
+Example:
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"route-auto",
+    "stream":true,
+    "messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}]
+  }'
+```
+
+This currently exposes an OpenAI-style SSE stream from the RouteLabs API layer so existing clients can consume streamed chunks normally.
 
 ### Existing tool compatibility
 

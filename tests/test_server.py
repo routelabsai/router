@@ -290,6 +290,73 @@ def test_chat_completions_return_tool_calls_without_escalation() -> None:
     assert data["trace"]["escalated"] is False
 
 
+def test_chat_completions_stream_text_chunks() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "route-auto",
+            "stream": True,
+            "messages": [{"role": "user", "content": "summarize this document"}],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "chat.completion.chunk" in body
+    assert "\"content\": \"echo: \"" in body
+    assert "data: [DONE]" in body
+
+
+def test_chat_completions_stream_tool_calls() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": ToolCallingProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "route-auto",
+            "stream": True,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather for a city",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"city": {"type": "string"}},
+                            "required": ["city"],
+                        },
+                    },
+                }
+            ],
+            "messages": [{"role": "user", "content": "What's the weather in Chicago?"}],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "\"tool_calls\"" in body
+    assert "\"get_weather\"" in body
+    assert "data: [DONE]" in body
+
+
 def test_chat_completions_uses_cloud_provider_for_high_complexity_tasks() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
