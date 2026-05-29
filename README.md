@@ -4,7 +4,14 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/routelabs-router.svg)](https://pypi.org/project/routelabs-router/)
 [![Publish to PyPI](https://github.com/routelabsai/router/actions/workflows/publish.yml/badge.svg)](https://github.com/routelabsai/router/actions/workflows/publish.yml)
 
-`RouteLabs Router` is a local-first runtime that sits between your app and local/cloud LLMs.
+`RouteLabs Router` is a local-first routing runtime that sits between your app and local/cloud LLMs.
+
+It lets you keep the client surface your app already uses while adding:
+
+- local-first execution
+- verification-aware escalation
+- privacy-aware routing
+- visible traces for why a request stayed local, escalated, or fell back
 
 It is designed to feel like a practical gateway, not just a routing idea:
 
@@ -24,7 +31,14 @@ It gives applications one endpoint that can decide:
 - when verification forced an escalation
 - when privacy detection forced local execution
 
-The goal is simple: route each step to the cheapest, fastest, safest model that can still be trusted.
+The goal is simple: keep easy and sensitive work local, escalate only when needed, and stay compatible with the SDKs and agent tools people already use.
+
+## Why Try It
+
+- You already have OpenAI-style or Anthropic-style clients and want to switch by changing `base_url`
+- You want local-first routing without losing cloud fallback
+- You want to see why a request stayed local, escalated, or failed over
+- You want one runtime layer above `Ollama`, `llama.cpp`, OpenAI-compatible backends, and Anthropic
 
 ## Who This Is For
 
@@ -56,7 +70,7 @@ Those may come later, but the current product is a runtime + middleware + API.
 
 ## 60-Second Quickstart
 
-Install from PyPI, start the runtime, and send one request:
+Install from PyPI, start the runtime, and send one request. Cloud keys are optional.
 
 ```bash
 pip install routelabs-router
@@ -72,6 +86,19 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "messages":[{"role":"user","content":"Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity."}],
+    "private":false
+  }'
+```
+
+If you prefer Anthropic-style clients:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"claude-sonnet-4-20250514",
+    "max_tokens":256,
+    "messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}],
     "private":false
   }'
 ```
@@ -129,6 +156,22 @@ It is for teams who want:
 - token-speed visibility for chat requests
 - provider and model selection that can evolve over time
 - a foundation for agentic step-level routing later
+
+## Compatibility
+
+RouteLabs is easiest to adopt when you already use one of these client styles:
+
+- OpenAI Chat Completions via `/v1/chat/completions`
+- OpenAI Responses via `/v1/responses`
+- Anthropic Messages via `/v1/messages`
+- OpenAI-style embeddings via `/v1/embeddings`
+
+That means the common migration path is:
+
+1. start RouteLabs locally
+2. point your existing client at RouteLabs
+3. keep your app surface mostly the same
+4. gain local-first routing, fallback, and traces
 
 ## How You Use It
 
