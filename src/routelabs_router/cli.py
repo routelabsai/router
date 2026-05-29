@@ -34,6 +34,11 @@ def main() -> None:
     )
     models_parser.add_argument("--config", default="./config/router.yaml")
 
+    quickstart_parser = subparsers.add_parser(
+        "quickstart", help="Show the fastest setup path for local, OpenAI, and Anthropic use"
+    )
+    quickstart_parser.add_argument("--config", default="./config/router.yaml")
+
     start_parser = subparsers.add_parser("start", help="Start the RouteLabs server")
     start_parser.add_argument("--config", default="./config/router.yaml")
     start_parser.add_argument("--host", default=None)
@@ -64,6 +69,9 @@ def main() -> None:
     elif args.command == "models":
         config = load_config(Path(args.config))
         _print_models(ChatService(config))
+    elif args.command == "quickstart":
+        config = load_config(Path(args.config))
+        _print_quickstart(ChatService(config), config)
     elif args.command == "start":
         config = load_config(Path(args.config))
         _print_startup_status(config)
@@ -101,7 +109,7 @@ def _print_startup_status(config) -> None:
             "Start Ollama with `ollama serve` if you want local execution."
         )
     if not cloud.available:
-        env_name = config.providers.cloud.openai_compatible.api_key_env or "OPENAI_API_KEY"
+        env_name = _cloud_api_env_name(config)
         print(
             f"Warning: cloud provider '{cloud_name}' is not configured. "
             f"Set `{env_name}` to enable cloud fallback and escalation."
@@ -163,8 +171,58 @@ def _print_doctor_report(service: ChatService, config) -> None:
     if not local.available:
         print("Action: run `ollama serve` to enable local execution.")
     if not cloud.available:
-        env_name = config.providers.cloud.openai_compatible.api_key_env or "OPENAI_API_KEY"
+        env_name = _cloud_api_env_name(config)
         print(f"Action: set `{env_name}` to enable cloud fallback and escalation.")
+
+
+def _print_quickstart(service: ChatService, config) -> None:
+    health = service.health()
+    local_name = config.providers.local.default
+    cloud_name = config.providers.cloud.default
+    local = health.providers[local_name]
+    cloud = health.providers[cloud_name]
+    missing_local_models = _missing_configured_ollama_models(service, config)
+
+    print("RouteLabs Quickstart")
+    print("Fastest adoption path: start RouteLabs, point your existing client at it, and use `route-auto`.")
+    print("")
+    print("Current readiness:")
+    print(f"- Local provider ({local_name}): {local.status}")
+    print(f"- Cloud provider ({cloud_name}): {cloud.status}")
+    if missing_local_models:
+        print(f"- Missing local models: {', '.join(missing_local_models)}")
+    print("")
+
+    print("1. Local-only setup")
+    print("   Run:")
+    print("   ollama serve")
+    for model_name in missing_local_models:
+        print(f"   ollama pull {model_name}")
+    print("   router start")
+    print("")
+
+    print("2. OpenAI-compatible client setup")
+    print("   Base URL: http://127.0.0.1:8000/v1")
+    print("   Model: route-auto")
+    print("   Example endpoint: /v1/chat/completions or /v1/responses")
+    print("")
+
+    print("3. Anthropic-compatible client setup")
+    print("   Base URL: http://127.0.0.1:8000")
+    print("   Model: claude-sonnet-4-20250514 or route-auto")
+    print("   Example endpoint: /v1/messages")
+    print("")
+
+    if not cloud.available:
+        print("Optional cloud fallback")
+        print(f"   Set `{_cloud_api_env_name(config)}` to enable the configured cloud provider.")
+        print("   Then restart `router start`.")
+        print("")
+
+    print("4. First test request")
+    print("   curl -X POST http://127.0.0.1:8000/v1/chat/completions \\")
+    print('     -H "Content-Type: application/json" \\')
+    print('     -d \'{"model":"route-auto","messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}]}\'')
 
 
 def _print_models(service: ChatService) -> None:
@@ -195,3 +253,10 @@ def _missing_configured_ollama_models(service: ChatService, config) -> list[str]
         if model.provider == "ollama" and model.status == "installed"
     }
     return sorted(model for model in configured_local_models if model not in installed_ids)
+
+
+def _cloud_api_env_name(config) -> str:
+    cloud_name = config.providers.cloud.default
+    if cloud_name == "anthropic":
+        return config.providers.cloud.anthropic.api_key_env or "ANTHROPIC_API_KEY"
+    return config.providers.cloud.openai_compatible.api_key_env or "OPENAI_API_KEY"

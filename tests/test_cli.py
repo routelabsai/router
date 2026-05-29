@@ -282,3 +282,102 @@ def test_models_command_prints_known_models(monkeypatch, capsys) -> None:
     assert "RouteLabs Models" in output
     assert "route-auto" in output
     assert "qwen3:4b" in output
+
+
+def test_quickstart_command_prints_adoption_paths(monkeypatch, capsys) -> None:
+    class FakeService:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def health(self) -> HealthResponse:
+            return HealthResponse(
+                status="degraded",
+                providers={
+                    "ollama": ProviderHealth(available=False, status="unreachable"),
+                    "openai-compatible": ProviderHealth(
+                        available=False, status="not_configured"
+                    ),
+                },
+            )
+
+        def list_models(self):
+            class Response:
+                data = [
+                    type(
+                        "Model",
+                        (),
+                        {
+                            "id": "route-auto",
+                            "provider": "routelabs",
+                            "source": "virtual",
+                            "status": "ready",
+                            "installed": True,
+                        },
+                    )()
+                ]
+
+            return Response()
+
+    monkeypatch.setattr(cli, "ChatService", FakeService)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "quickstart", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Quickstart" in output
+    assert "OpenAI-compatible client setup" in output
+    assert "Anthropic-compatible client setup" in output
+    assert "ollama serve" in output
+    assert "OPENAI_API_KEY" in output
+
+
+def test_start_command_uses_anthropic_env_hint_when_anthropic_is_default_cloud(
+    monkeypatch, capsys
+) -> None:
+    def fake_run(app, host, port, reload) -> None:
+        return None
+
+    class FakeService:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def health(self) -> HealthResponse:
+            return HealthResponse(
+                status="degraded",
+                providers={
+                    "ollama": ProviderHealth(available=True, status="ready"),
+                    "anthropic": ProviderHealth(
+                        available=False, status="not_configured"
+                    ),
+                },
+            )
+
+        def list_models(self):
+            class Response:
+                data = []
+
+            return Response()
+
+    original = cli.load_config
+
+    def fake_load_config(path):
+        config = original(path)
+        config.providers.cloud.default = "anthropic"
+        return config
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setattr(cli, "ChatService", FakeService)
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "start", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "Cloud provider (anthropic): not_configured" in output
+    assert "Set `ANTHROPIC_API_KEY`" in output
