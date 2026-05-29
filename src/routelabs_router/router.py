@@ -46,6 +46,8 @@ class RouterEngine:
                 return self.config.providers.local.llamacpp.model
         if target == "cloud" and provider == "openai-compatible":
             return self.config.providers.cloud.openai_compatible.model
+        if target == "cloud" and provider == "anthropic":
+            return self.config.providers.cloud.anthropic.model
         return "unknown"
 
 

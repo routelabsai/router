@@ -7,17 +7,12 @@ client = OpenAI(
 )
 
 
-response = client.chat.completions.create(
+response = client.responses.create(
     model="route-auto",
-    messages=[
-        {
-            "role": "user",
-            "content": (
-                "Summarize this in one sentence: RouteLabs Router chooses between "
-                "local and cloud models based on privacy, cost, latency, and task complexity."
-            ),
-        }
-    ],
+    input=(
+        "Summarize this in one sentence: RouteLabs Router chooses between "
+        "local and cloud models based on privacy, cost, latency, and task complexity."
+    ),
 )
 
-print(response)
+print(response.output_text)

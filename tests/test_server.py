@@ -61,6 +61,26 @@ class FakeCloudProvider:
         )
 
 
+class FakeAnthropicCloudProvider:
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        return ProviderResult(
+            content="anthropic: architecture answer",
+            model=model or "claude-sonnet-4-20250514",
+        )
+
+
+class ValidJSONCloudProvider(FakeCloudProvider):
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        return ProviderResult(
+            content='{"answer":"ok"}',
+            model=model or "fake-cloud-model",
+        )
+
+
 class WeakLocalProvider:
     def complete(
         self, request: ChatCompletionRequest, model: str | None = None
@@ -102,6 +122,19 @@ class FailingLocalProvider:
         self, request: EmbeddingsRequest, model: str | None = None
     ) -> ProviderEmbeddingResult:
         raise ProviderExecutionError("ollama", "connection refused")
+
+
+class InvalidJSONLocalProvider:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        return ProviderResult(
+            content=self.content,
+            model=model or "invalid-local-model",
+        )
 
 
 class MixedLocalProvider:
@@ -162,6 +195,531 @@ def test_chat_completions_uses_local_provider() -> None:
     assert data["choices"][0]["message"]["content"] == "echo: summarize this document"
     assert data["route"]["provider"] == "ollama"
     assert data["trace"]["escalated"] is False
+
+
+def test_responses_endpoint_uses_local_provider() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "input": "summarize this document",
+            "model": "route-auto",
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["output_text"] == "echo: summarize this document"
+    assert data["output"][0]["type"] == "message"
+    assert data["route"]["provider"] == "ollama"
+    assert data["trace"]["escalated"] is False
+
+
+def test_anthropic_messages_endpoint_uses_local_provider() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": "summarize this document"}],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["content"][0]["text"] == "echo: summarize this document"
+    assert data["role"] == "assistant"
+    assert data["route"]["provider"] == "ollama"
+
+
+def test_anthropic_messages_endpoint_returns_tool_use_blocks() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": ToolCallingProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 128,
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather for a city",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "messages": [{"role": "user", "content": "What's the weather in Chicago?"}],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(block["type"] == "tool_use" for block in data["content"])
+    assert data["stop_reason"] == "tool_use"
+
+
+def test_responses_endpoint_supports_message_items_and_instructions() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "instructions": "Answer in one sentence.",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "summarize this document"}],
+                }
+            ],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["output_text"] == "echo: summarize this document"
+
+
+def test_responses_endpoint_returns_function_calls() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": ToolCallingProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "input": "What is the weather in Chicago?",
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(item["type"] == "function_call" for item in data["output"])
+
+
+def test_responses_endpoint_accepts_top_level_input_text_items() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "input": [
+                {
+                    "type": "input_text",
+                    "text": "summarize this document",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["output_text"] == "echo: summarize this document"
+
+
+def test_responses_endpoint_rejects_empty_input_lists() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post("/v1/responses", json={"input": []})
+
+    assert response.status_code == 422
+    assert "responses input must include" in response.json()["detail"]
+
+
+def test_responses_stream_text_chunks() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "model": "route-auto",
+            "stream": True,
+            "input": "summarize this document",
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "\"type\": \"response.created\"" in body
+    assert "\"type\": \"response.output_text.delta\"" in body
+    assert "\"type\": \"response.output_text.done\"" in body
+    assert "\"type\": \"response.completed\"" in body
+    assert "data: [DONE]" in body
+
+
+def test_responses_stream_tool_calls() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": ToolCallingProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "stream": True,
+            "input": "What's the weather in Chicago?",
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "\"type\": \"response.function_call_arguments.done\"" in body
+    assert "\"get_weather\"" in body
+    assert "\"type\": \"response.completed\"" in body
+    assert "data: [DONE]" in body
+
+
+def test_anthropic_messages_stream_text_and_stop_events() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 128,
+            "stream": True,
+            "messages": [{"role": "user", "content": "summarize this document"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "event: message_start" in body
+    assert "event: content_block_delta" in body
+    assert "event: message_stop" in body
+
+
+def test_chat_completions_can_fall_back_to_anthropic_cloud_provider() -> None:
+    config = DEFAULT_CONFIG.model_copy(deep=True)
+    config.providers.cloud.default = "anthropic"
+    config.providers.cloud.anthropic.api_key = "anthropic-test-key"
+    service = ChatService(
+        config,
+        router=RouterEngine(config),
+        providers={"ollama": WeakLocalProvider(), "anthropic": FakeAnthropicCloudProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "design architecture for a multi-step agent",
+                }
+            ],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "anthropic"
+    assert data["choices"][0]["message"]["content"] == "anthropic: architecture answer"
+    assert data["trace"]["escalated"] is True
+
+
+def test_chat_completions_fall_back_to_cloud_when_local_structured_output_is_invalid() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={
+            "ollama": InvalidJSONLocalProvider("not json"),
+            "openai-compatible": ValidJSONCloudProvider(),
+        },
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "route-auto",
+            "messages": [{"role": "user", "content": "Return a JSON object"}],
+            "response_format": {"type": "json_object"},
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "openai-compatible"
+    assert data["trace"]["attempts"][0]["outcome"] == "failure"
+    assert "invalid structured output" in data["trace"]["attempts"][0]["reason"]
+
+
+def test_chat_completions_return_clear_error_when_structured_output_is_invalid_and_no_fallback_exists() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": InvalidJSONLocalProvider("not json")},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Return a JSON object"}],
+            "response_format": {"type": "json_object"},
+            "private": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "invalid structured output" in response.json()["detail"]
+
+
+def test_chat_completions_reject_schema_mismatch_when_no_fallback_exists() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": InvalidJSONLocalProvider('{"answer":1}')},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Return structured JSON"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "private": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "$.answer expected string" in response.json()["detail"]
+
+
+def test_responses_validate_text_format_json_object() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": InvalidJSONLocalProvider("not json")},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "input": "Return a JSON object",
+            "text": {"format": {"type": "json_object"}},
+            "private": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "invalid structured output" in response.json()["detail"]
+
+
+def test_chat_completions_reject_string_length_and_pattern_schema_mismatches() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": InvalidJSONLocalProvider('{"code":"abc"}')},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Return structured JSON"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "code",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "minLength": 4,
+                                "pattern": "^[A-Z]+$",
+                            }
+                        },
+                        "required": ["code"],
+                    },
+                },
+            },
+            "private": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "$.code expected length >= 4" in response.json()["detail"]
+
+
+def test_chat_completions_reject_numeric_bounds_schema_mismatches() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": InvalidJSONLocalProvider('{"score":0}')},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Return structured JSON"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "score",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "score": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 10,
+                            }
+                        },
+                        "required": ["score"],
+                    },
+                },
+            },
+            "private": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "$.score expected value >= 1" in response.json()["detail"]
+
+
+def test_chat_completions_reject_array_bounds_schema_mismatches() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": InvalidJSONLocalProvider('{"items":[]}')},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Return structured JSON"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "items",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "items": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 2,
+                                "items": {"type": "string"},
+                            }
+                        },
+                        "required": ["items"],
+                    },
+                },
+            },
+            "private": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "$.items expected at least 1 item(s)" in response.json()["detail"]
 
 
 def test_models_endpoint_lists_route_auto_and_configured_models() -> None:

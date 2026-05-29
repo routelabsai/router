@@ -65,6 +65,91 @@ class RouteLabsClient:
             payload["presence_penalty"] = presence_penalty
         return self._request("POST", "/v1/chat/completions", json=payload)
 
+    def responses(
+        self,
+        input: str | list[dict[str, Any]],
+        model: str | None = None,
+        instructions: str | None = None,
+        private: bool = False,
+        stream: bool = False,
+        text: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_output_tokens: int | None = None,
+        stop: str | list[str] | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "input": input,
+            "private": private,
+            "stream": stream,
+        }
+        if model is not None:
+            payload["model"] = model
+        if instructions is not None:
+            payload["instructions"] = instructions
+        if text is not None:
+            payload["text"] = text
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if max_output_tokens is not None:
+            payload["max_output_tokens"] = max_output_tokens
+        if stop is not None:
+            payload["stop"] = stop
+        if seed is not None:
+            payload["seed"] = seed
+        if frequency_penalty is not None:
+            payload["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
+        return self._request("POST", "/v1/responses", json=payload)
+
+    def messages(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        system: str | list[dict[str, Any]] | None = None,
+        max_tokens: int = 1024,
+        private: bool = False,
+        stream: bool = False,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        stop_sequences: list[str] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "private": private,
+            "stream": stream,
+        }
+        if model is not None:
+            payload["model"] = model
+        if system is not None:
+            payload["system"] = system
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if stop_sequences is not None:
+            payload["stop_sequences"] = stop_sequences
+        return self._request("POST", "/v1/messages", json=payload)
+
     def embeddings(
         self,
         input: str | list[str],

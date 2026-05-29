@@ -1,5 +1,6 @@
 import httpx
 
+from routelabs_router.adapters.anthropic import AnthropicChatAdapter
 from routelabs_router.adapters.ollama import OllamaChatAdapter
 from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import DEFAULT_CONFIG
@@ -136,3 +137,65 @@ def test_ollama_adapter_maps_json_schema_and_common_fields(monkeypatch) -> None:
     assert payload["options"]["seed"] == 7
     assert payload["options"]["frequency_penalty"] == 0.1
     assert payload["options"]["presence_penalty"] == 0.2
+
+
+def test_anthropic_adapter_maps_messages_tools_and_usage(monkeypatch) -> None:
+    fake = CapturingHTTPClient(
+        {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_123",
+                    "name": "get_weather",
+                    "input": {"city": "Chicago"},
+                },
+            ],
+            "model": "claude-sonnet-4-20250514",
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 12, "output_tokens": 8},
+        }
+    )
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+
+    adapter = AnthropicChatAdapter(
+        DEFAULT_CONFIG.providers.cloud.anthropic.model_copy(
+            update={"api_key": "test-key"}
+        )
+    )
+    result = adapter.complete(
+        ChatCompletionRequest(
+            messages=[
+                ChatMessage(role="system", content="Be concise"),
+                ChatMessage(role="user", content="What's the weather?"),
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+            tool_choice="auto",
+            max_tokens=128,
+        ),
+        model="claude-sonnet-4-20250514",
+    )
+
+    _, url, payload, headers = fake.calls[0]
+    assert url.endswith("/messages")
+    assert payload["system"] == "Be concise"
+    assert payload["tools"][0]["name"] == "get_weather"
+    assert payload["tool_choice"] == {"type": "auto"}
+    assert payload["max_tokens"] == 128
+    assert headers["x-api-key"] == "test-key"
+    assert result.content == "Hello"
+    assert result.finish_reason == "tool_calls"
+    assert result.tool_calls[0]["function"]["name"] == "get_weather"
+    assert result.usage.total_tokens == 20

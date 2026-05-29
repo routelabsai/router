@@ -47,6 +47,28 @@ class ChatCompletionRequest(BaseModel):
     presence_penalty: float | None = None
 
 
+class ResponsesTextConfig(BaseModel):
+    format: dict[str, Any] | None = None
+
+
+class ResponsesRequest(BaseModel):
+    input: str | list[Any]
+    model: str | None = None
+    instructions: str | None = None
+    private: bool = False
+    stream: bool = False
+    text: ResponsesTextConfig | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    max_output_tokens: int | None = None
+    stop: str | list[str] | None = None
+    seed: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+
+
 class EmbeddingsRequest(BaseModel):
     input: str | list[str]
     model: str | None = None
@@ -83,6 +105,90 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[ChatCompletionChoice]
     usage: ChatCompletionUsage
+    route: RouteDecision
+    trace: "DecisionTrace"
+
+
+class ResponsesOutputText(BaseModel):
+    type: str = "output_text"
+    text: str
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ResponsesOutputMessage(BaseModel):
+    id: str
+    type: str = "message"
+    status: str = "completed"
+    role: str = "assistant"
+    content: list[ResponsesOutputText] = Field(default_factory=list)
+
+
+class ResponsesFunctionCall(BaseModel):
+    id: str
+    type: str = "function_call"
+    call_id: str
+    name: str
+    arguments: str
+    status: str = "completed"
+
+
+class ResponsesUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ResponsesResponse(BaseModel):
+    id: str
+    object: str = "response"
+    created_at: int
+    status: str = "completed"
+    model: str
+    output: list[ResponsesOutputMessage | ResponsesFunctionCall]
+    output_text: str = ""
+    usage: ResponsesUsage
+    route: RouteDecision
+    trace: "DecisionTrace"
+
+
+class AnthropicMessageRequest(BaseModel):
+    role: str
+    content: str | list[dict[str, Any]]
+
+
+class AnthropicToolChoice(BaseModel):
+    type: str
+    name: str | None = None
+
+
+class AnthropicMessagesRequest(BaseModel):
+    messages: list[AnthropicMessageRequest] = Field(..., min_length=1)
+    model: str | None = None
+    system: str | list[dict[str, Any]] | None = None
+    max_tokens: int = 1024
+    private: bool = False
+    stream: bool = False
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: AnthropicToolChoice | dict[str, Any] | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    stop_sequences: list[str] | None = None
+
+
+class AnthropicUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class AnthropicMessagesResponse(BaseModel):
+    id: str
+    type: str = "message"
+    role: str = "assistant"
+    content: list[dict[str, Any]]
+    model: str
+    stop_reason: str | None = None
+    stop_sequence: str | None = None
+    usage: AnthropicUsage
     route: RouteDecision
     trace: "DecisionTrace"
 

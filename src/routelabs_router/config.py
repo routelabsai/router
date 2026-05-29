@@ -24,6 +24,7 @@ class LocalProvidersConfig(BaseModel):
 class CloudProvidersConfig(BaseModel):
     default: str
     openai_compatible: ProviderConfig
+    anthropic: ProviderConfig
 
 
 class ProvidersConfig(BaseModel):
@@ -102,6 +103,11 @@ DEFAULT_CONFIG = Config.model_validate(
                     "embedding_model": "text-embedding-3-small",
                     "api_key_env": "OPENAI_API_KEY",
                 },
+                "anthropic": {
+                    "base_url": "https://api.anthropic.com/v1",
+                    "model": "claude-sonnet-4-20250514",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                },
             },
         },
         "policies": {
@@ -139,12 +145,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 def _inject_provider_secrets(config: dict) -> None:
     cloud = config.get("providers", {}).get("cloud", {})
-    openai_compatible = cloud.get("openai_compatible")
-    if not isinstance(openai_compatible, dict):
-        return
-
-    env_name = openai_compatible.get("api_key_env")
-    if isinstance(env_name, str) and env_name:
-        api_key = os.getenv(env_name)
-        if api_key:
-            openai_compatible["api_key"] = api_key
+    for provider_name in ("openai_compatible", "anthropic"):
+        provider = cloud.get(provider_name)
+        if not isinstance(provider, dict):
+            continue
+        env_name = provider.get("api_key_env")
+        if isinstance(env_name, str) and env_name:
+            api_key = os.getenv(env_name)
+            if api_key:
+                provider["api_key"] = api_key

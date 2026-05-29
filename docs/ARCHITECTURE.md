@@ -49,16 +49,20 @@ Today the repository supports:
 - `/healthz` for runtime and provider readiness
 - `/v1/route` for route inspection
 - `/v1/chat/completions` for OpenAI-style chat requests
+- `/v1/responses` for newer OpenAI-style agent requests
+- `/v1/messages` for Anthropic-style message requests
 - `/v1/embeddings` for OpenAI-style embeddings requests
 - `/v1/models` for OpenAI-compatible model discovery
 - live `Ollama` model inventory folded into `/v1/models` when available
 - OpenAI-style tool-call passthrough through `/v1/chat/completions`
 - OpenAI-style SSE streaming through `/v1/chat/completions`
+- a compatibility layer from `/v1/responses` onto the same routing and verification path
 - common OpenAI request-field passthrough and structured-output mapping
 - `/v1/stats` for simple routing telemetry
 - `/v1/logs` for recent request-level route logs
 - `Ollama` as the first real execution backend
 - generic OpenAI-compatible cloud execution
+- Anthropic Messages-compatible cloud execution
 - heuristic verification and escalation traces
 - simple estimated cost accounting
 - heuristic privacy detection

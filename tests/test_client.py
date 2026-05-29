@@ -49,6 +49,8 @@ def test_client_chat_stats_logs_and_health(monkeypatch) -> None:
 
     client = RouteLabsClient("http://example.test")
     client.chat([{"role": "user", "content": "hello"}], private=False)
+    client.responses("hello from responses")
+    client.messages([{"role": "user", "content": "hello from anthropic"}])
     client.embeddings("hello world")
     client.models()
     client.stats()
@@ -56,11 +58,13 @@ def test_client_chat_stats_logs_and_health(monkeypatch) -> None:
     client.health()
 
     assert fake.calls[0][1] == "http://example.test/v1/chat/completions"
-    assert fake.calls[1][1] == "http://example.test/v1/embeddings"
-    assert fake.calls[2][1] == "http://example.test/v1/models"
-    assert fake.calls[3][1] == "http://example.test/v1/stats"
-    assert fake.calls[4][1] == "http://example.test/v1/logs"
-    assert fake.calls[5][1] == "http://example.test/healthz"
+    assert fake.calls[1][1] == "http://example.test/v1/responses"
+    assert fake.calls[2][1] == "http://example.test/v1/messages"
+    assert fake.calls[3][1] == "http://example.test/v1/embeddings"
+    assert fake.calls[4][1] == "http://example.test/v1/models"
+    assert fake.calls[5][1] == "http://example.test/v1/stats"
+    assert fake.calls[6][1] == "http://example.test/v1/logs"
+    assert fake.calls[7][1] == "http://example.test/healthz"
 
 
 def test_client_chat_supports_agent_loop_fields(monkeypatch) -> None:
@@ -87,3 +91,45 @@ def test_client_chat_supports_agent_loop_fields(monkeypatch) -> None:
     assert payload["model"] == "route-auto"
     assert payload["tools"][0]["function"]["name"] == "get_weather"
     assert payload["tool_choice"] == "auto"
+
+
+def test_client_responses_supports_openai_style_fields(monkeypatch) -> None:
+    fake = FakeHTTPClient()
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+
+    client = RouteLabsClient("http://example.test")
+    client.responses(
+        [{"role": "user", "content": "Return valid JSON"}],
+        model="route-auto",
+        instructions="Be concise",
+        text={"format": {"type": "json_object"}},
+        max_output_tokens=120,
+    )
+
+    method, url, payload = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://example.test/v1/responses"
+    assert payload["instructions"] == "Be concise"
+    assert payload["text"]["format"]["type"] == "json_object"
+    assert payload["max_output_tokens"] == 120
+
+
+def test_client_messages_supports_anthropic_style_fields(monkeypatch) -> None:
+    fake = FakeHTTPClient()
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+
+    client = RouteLabsClient("http://example.test")
+    client.messages(
+        [{"role": "user", "content": "Hello Claude"}],
+        model="claude-sonnet-4-20250514",
+        system="Be concise",
+        max_tokens=256,
+        tool_choice={"type": "auto"},
+    )
+
+    method, url, payload = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://example.test/v1/messages"
+    assert payload["system"] == "Be concise"
+    assert payload["max_tokens"] == 256
+    assert payload["tool_choice"]["type"] == "auto"

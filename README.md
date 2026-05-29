@@ -8,7 +8,7 @@
 
 It is designed to feel like a practical gateway, not just a routing idea:
 
-- one OpenAI-compatible endpoint
+- OpenAI-compatible endpoints and an Anthropic-compatible Messages endpoint
 - local-first execution with cloud fallback
 - verification-aware escalation
 - privacy-aware local preference
@@ -61,6 +61,7 @@ Install from PyPI, start the runtime, and send one request:
 ```bash
 pip install routelabs-router
 export OPENAI_API_KEY=your_api_key_here  # optional, enables cloud execution
+export ANTHROPIC_API_KEY=your_api_key_here  # optional, enables Anthropic cloud execution
 router start --reload
 ```
 
@@ -111,6 +112,8 @@ Most teams today have one of these problems:
 It is for teams who want:
 
 - one API for hybrid local + cloud inference
+- `/v1/responses` support for newer agent-style clients
+- `/v1/messages` support for Anthropic-style clients
 - OpenAI-compatible model discovery for existing SDKs and UIs
 - live `Ollama` model discovery
 - embeddings support for retrieval and RAG-style workflows
@@ -152,12 +155,14 @@ client = RouteLabsClient("http://127.0.0.1:8000")
 print(client.route("Summarize a short product description"))
 ```
 
-### 3. As an OpenAI-compatible endpoint
+### 3. As an OpenAI-compatible or Anthropic-compatible endpoint
 
 If you already have code using an OpenAI-style client, point it at RouteLabs via `base_url`.
 Use `model="route-auto"` when you want RouteLabs to choose the concrete backend model for each request.
 
 That is one of the easiest ways to adopt it without rewriting your app.
+
+If you already have Anthropic Messages API clients, point them at RouteLabs via `base_url` and call `/v1/messages`.
 
 ## What It Looks Like
 
@@ -229,6 +234,55 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 If `Ollama` is running locally, that request executes against your configured local model.
 If `OPENAI_API_KEY` is set, high-complexity requests can route through the configured OpenAI-compatible cloud provider.
 The response includes a trace showing the initial route, verification result, and any escalation.
+
+Newer OpenAI-style agent clients can also use `/v1/responses`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"route-auto",
+    "input":"Summarize RouteLabs Router in one sentence.",
+    "private":false
+  }'
+```
+
+Today, RouteLabs accepts these practical `/v1/responses` input shapes:
+
+- a plain string in `input`
+- a list of message-like items with `role` and `content`
+- a list of `type: "message"` items with nested `input_text` content
+- a top-level list of `type: "input_text"` items for simple text prompts
+
+When `stream=true`, RouteLabs emits semantic Responses-style SSE events including:
+
+- `response.created`
+- `response.output_text.delta`
+- `response.output_text.done`
+- `response.function_call_arguments.done` when relevant
+- `response.completed`
+
+Anthropic-style clients can use `/v1/messages`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"claude-sonnet-4-20250514",
+    "max_tokens":256,
+    "messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}],
+    "private":false
+  }'
+```
+
+When `stream=true`, RouteLabs emits Anthropic-style message events including:
+
+- `message_start`
+- `content_block_start`
+- `content_block_delta`
+- `content_block_stop`
+- `message_delta`
+- `message_stop`
 
 ## Positioning
 
@@ -670,6 +724,21 @@ RouteLabs now passes through several common OpenAI chat request fields so existi
 - `presence_penalty`
 
 For local `Ollama` execution, OpenAI-style structured output requests are mapped into Ollama-compatible JSON mode or JSON-schema mode where possible.
+
+RouteLabs also validates structured outputs after generation. If a provider returns invalid JSON or violates the requested schema, RouteLabs treats that as an execution failure:
+
+- local routes can fall back to cloud when policy allows it
+- private or no-fallback routes return a clear error instead of silently returning malformed structured data
+
+Current schema validation coverage includes:
+
+- object shape and required fields
+- scalar types
+- enums
+- `additionalProperties: false`
+- string constraints like `minLength`, `maxLength`, and `pattern`
+- array constraints like `minItems` and `maxItems`
+- numeric bounds like `minimum`, `maximum`, `exclusiveMinimum`, and `exclusiveMaximum`
 
 Example:
 

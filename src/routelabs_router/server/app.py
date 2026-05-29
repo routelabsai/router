@@ -7,12 +7,16 @@ from fastapi.responses import StreamingResponse
 
 from routelabs_router.config import load_config
 from routelabs_router.models import (
+    AnthropicMessagesRequest,
+    AnthropicMessagesResponse,
     ChatCompletionRequest,
     ChatCompletionResponse,
     EmbeddingsRequest,
     EmbeddingsResponse,
     HealthResponse,
     ModelsListResponse,
+    ResponsesRequest,
+    ResponsesResponse,
     RouteLogResponse,
     RouteDecision,
     RouteRequest,
@@ -29,7 +33,7 @@ def create_app(
     config = load_config(resolved_path)
     engine = RouterEngine(config)
     chat_service = service or ChatService(config, router=engine)
-    app = FastAPI(title="RouteLabs Router", version="0.2.0")
+    app = FastAPI(title="RouteLabs Router", version="0.3.0")
 
     @app.get("/healthz")
     def healthcheck() -> HealthResponse:
@@ -50,6 +54,30 @@ def create_app(
                 media_type="text/event-stream",
             )
         return chat_service.create_chat_completion(request)
+
+    @app.post("/v1/responses", response_model=ResponsesResponse)
+    def responses(
+        request: ResponsesRequest,
+    ) -> ResponsesResponse | StreamingResponse:
+        if request.stream:
+            response = chat_service.create_response(request)
+            return StreamingResponse(
+                _stream_responses_chunks(response),
+                media_type="text/event-stream",
+            )
+        return chat_service.create_response(request)
+
+    @app.post("/v1/messages", response_model=AnthropicMessagesResponse)
+    def anthropic_messages(
+        request: AnthropicMessagesRequest,
+    ) -> AnthropicMessagesResponse | StreamingResponse:
+        if request.stream:
+            response = chat_service.create_anthropic_message(request)
+            return StreamingResponse(
+                _stream_anthropic_messages(response),
+                media_type="text/event-stream",
+            )
+        return chat_service.create_anthropic_message(request)
 
     @app.post("/v1/embeddings", response_model=EmbeddingsResponse)
     def embeddings(request: EmbeddingsRequest) -> EmbeddingsResponse:
@@ -130,3 +158,115 @@ def _stream_chat_completion_chunks(response: ChatCompletionResponse):
     }
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
+
+
+def _stream_responses_chunks(response: ResponsesResponse):
+    message_item = next(
+        (item for item in response.output if item.type == "message"),
+        None,
+    )
+    message_item_id = message_item.id if message_item is not None else None
+
+    yield f"data: {json.dumps({'type': 'response.created', 'response': response.model_dump()})}\n\n"
+
+    if response.output_text:
+        if message_item_id is not None:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": message_item.model_dump(),
+                    }
+                )
+                + "\n\n"
+            )
+        for token in response.output_text.split():
+            event = {
+                "type": "response.output_text.delta",
+                "response_id": response.id,
+                "item_id": message_item_id,
+                "output_index": 0,
+                "content_index": 0,
+                "delta": token + " ",
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+            time.sleep(0)
+        if message_item_id is not None:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "response.output_text.done",
+                        "response_id": response.id,
+                        "item_id": message_item_id,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "text": response.output_text,
+                    }
+                )
+                + "\n\n"
+            )
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": message_item.model_dump(),
+                    }
+                )
+                + "\n\n"
+            )
+
+    for index, item in enumerate(response.output):
+        if item.type != "function_call":
+            continue
+        event = {
+            "type": "response.function_call_arguments.done",
+            "item_id": item.id,
+            "output_index": index,
+            "call_id": item.call_id,
+            "name": item.name,
+            "arguments": item.arguments,
+        }
+        yield f"data: {json.dumps(event)}\n\n"
+
+    completed = {
+        "type": "response.completed",
+        "response": response.model_dump(),
+    }
+    yield f"data: {json.dumps(completed)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+def _stream_anthropic_messages(response: AnthropicMessagesResponse):
+    yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': response.model_dump()})}\n\n"
+    for index, block in enumerate(response.content):
+        yield (
+            "event: content_block_start\n"
+            f"data: {json.dumps({'type': 'content_block_start', 'index': index, 'content_block': block})}\n\n"
+        )
+        if block.get("type") == "text":
+            text = str(block.get("text", ""))
+            for token in text.split():
+                yield (
+                    "event: content_block_delta\n"
+                    f"data: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': {'type': 'text_delta', 'text': token + ' '}})}\n\n"
+                )
+                time.sleep(0)
+        elif block.get("type") == "tool_use":
+            yield (
+                "event: content_block_delta\n"
+                f"data: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': {'type': 'input_json_delta', 'partial_json': json.dumps(block.get('input', {}))}})}\n\n"
+            )
+        yield (
+            "event: content_block_stop\n"
+            f"data: {json.dumps({'type': 'content_block_stop', 'index': index})}\n\n"
+        )
+    yield (
+        "event: message_delta\n"
+        f"data: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': response.stop_reason, 'stop_sequence': response.stop_sequence}, 'usage': response.usage.model_dump()})}\n\n"
+    )
+    yield "event: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"

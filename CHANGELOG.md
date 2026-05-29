@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+This release makes RouteLabs much easier to adopt across the current agent ecosystem by adding both newer OpenAI-style surfaces and an Anthropic-compatible surface.
+
+Highlights:
+
+- `/v1/responses` support for newer OpenAI-style agent clients
+- `/v1/messages` support for Anthropic Messages-style clients
+- Anthropic cloud provider adapter and Anthropic-first cloud fallback support
+- stronger structured-output validation for `json_object` and practical `json_schema` constraints
+- semantic streaming events for both `/v1/responses` and `/v1/messages`
+- clearer docs and examples for OpenAI-compatible and Anthropic-compatible adoption paths
+
+Suggested upgrade test:
+
+```bash
+pip install --upgrade routelabs-router
+router doctor
+router start
+```
+
 ## 0.2.0
 
 This release turns RouteLabs Router into a much more usable local-first runtime for real builder workflows.
