@@ -692,6 +692,61 @@ You may need to install the OpenAI SDK separately:
 pip install openai
 ```
 
+### Anthropic SDK drop-in example
+
+If you already use the Anthropic Python SDK, you can point it at RouteLabs:
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    base_url="http://127.0.0.1:8000",
+    api_key="not-needed-for-local-dev",
+)
+
+response = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=256,
+    messages=[
+        {
+            "role": "user",
+            "content": "Summarize RouteLabs Router in one sentence.",
+        }
+    ],
+)
+```
+
+See [`examples/anthropic-sdk-client.py`](examples/anthropic-sdk-client.py).
+You may need to install the Anthropic SDK separately:
+
+```bash
+pip install anthropic
+```
+
+### LangChain drop-in example
+
+If you already use `LangChain`, you can point `ChatOpenAI` at RouteLabs:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    model="route-auto",
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="not-needed-for-local-dev",
+)
+
+response = llm.invoke("Summarize RouteLabs Router in one sentence.")
+print(response.content)
+```
+
+See [`examples/langchain-openai-compatible.py`](examples/langchain-openai-compatible.py).
+You may need to install LangChain packages separately:
+
+```bash
+pip install langchain-openai
+```
+
 For a multi-step tool-calling example, see:
 
 - [`examples/agent-loop.py`](examples/agent-loop.py)
