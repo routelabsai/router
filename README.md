@@ -466,7 +466,19 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 - `privacy-first.yaml`
 - `unsloth-local.yaml`
 
-Use one as your active config by copying or merging it into [`config/router.yaml`](config/router.yaml).
+The fastest way to scaffold a config now is:
+
+```bash
+router init --profile balanced
+```
+
+Or generate a config that defaults to Anthropic cloud fallback:
+
+```bash
+router init --profile balanced --cloud anthropic
+```
+
+By default this writes to [`config/router.yaml`](config/router.yaml). Use `--output` to write somewhere else or `--force` to overwrite an existing file.
 
 ### Start the runtime
 
@@ -516,6 +528,12 @@ This shows:
 
 ```bash
 router models
+```
+
+### Show the fastest next setup path
+
+```bash
+router quickstart
 ```
 
 This shows:

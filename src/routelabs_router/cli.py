@@ -2,8 +2,9 @@ import argparse
 from pathlib import Path
 
 import uvicorn
+import yaml
 
-from routelabs_router.config import load_config
+from routelabs_router.config import DEFAULT_CONFIG, load_config
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
 from routelabs_router.server.app import create_app
@@ -39,6 +40,27 @@ def main() -> None:
     )
     quickstart_parser.add_argument("--config", default="./config/router.yaml")
 
+    init_parser = subparsers.add_parser(
+        "init", help="Create a starter router config from a profile"
+    )
+    init_parser.add_argument(
+        "--profile",
+        default="balanced",
+        choices=("balanced", "local-first", "privacy-first", "openclaw", "unsloth-local"),
+    )
+    init_parser.add_argument(
+        "--cloud",
+        default="openai-compatible",
+        choices=("openai-compatible", "anthropic"),
+        help="Default cloud provider to scaffold into the config",
+    )
+    init_parser.add_argument("--output", default="./config/router.yaml")
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the output file if it already exists",
+    )
+
     start_parser = subparsers.add_parser("start", help="Start the RouteLabs server")
     start_parser.add_argument("--config", default="./config/router.yaml")
     start_parser.add_argument("--host", default=None)
@@ -72,6 +94,13 @@ def main() -> None:
     elif args.command == "quickstart":
         config = load_config(Path(args.config))
         _print_quickstart(ChatService(config), config)
+    elif args.command == "init":
+        _write_init_config(
+            profile=args.profile,
+            cloud=args.cloud,
+            output_path=Path(args.output),
+            force=args.force,
+        )
     elif args.command == "start":
         config = load_config(Path(args.config))
         _print_startup_status(config)
@@ -225,6 +254,46 @@ def _print_quickstart(service: ChatService, config) -> None:
     print('     -d \'{"model":"route-auto","messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}]}\'')
 
 
+def _write_init_config(
+    profile: str,
+    cloud: str,
+    output_path: Path,
+    force: bool,
+) -> None:
+    if output_path.exists() and not force:
+        print(
+            f"Config already exists at {output_path}. "
+            "Re-run with `--force` to overwrite it."
+        )
+        raise SystemExit(1)
+
+    profile_path = Path("./config/profiles") / f"{profile}.yaml"
+    base = DEFAULT_CONFIG.model_dump()
+    profile_data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    merged = _deep_merge_dicts(base, profile_data)
+    merged["providers"]["cloud"]["default"] = cloud
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        yaml.safe_dump(merged, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    print(f"Created RouteLabs config at {output_path}")
+    print(f"Profile: {profile}")
+    print(f"Default cloud provider: {cloud}")
+    print("")
+    print("Next steps:")
+    print("1. Start your local runtime with `ollama serve`.")
+    print("2. Pull local models if needed:")
+    print(f"   ollama pull {merged['providers']['local']['ollama']['model']}")
+    embedding_model = merged["providers"]["local"]["ollama"].get("embedding_model")
+    if embedding_model:
+        print(f"   ollama pull {embedding_model}")
+    print(f"3. Set `{_cloud_api_env_name_from_provider_name(cloud, merged)}` if you want cloud fallback.")
+    print(f"4. Run `router quickstart --config {output_path}`.")
+    print(f"5. Run `router start --config {output_path}`.")
+
+
 def _print_models(service: ChatService) -> None:
     models = service.list_models().data
     print("RouteLabs Models")
@@ -260,3 +329,31 @@ def _cloud_api_env_name(config) -> str:
     if cloud_name == "anthropic":
         return config.providers.cloud.anthropic.api_key_env or "ANTHROPIC_API_KEY"
     return config.providers.cloud.openai_compatible.api_key_env or "OPENAI_API_KEY"
+
+
+def _cloud_api_env_name_from_provider_name(cloud_name: str, config_dict: dict) -> str:
+    if cloud_name == "anthropic":
+        return (
+            config_dict.get("providers", {})
+            .get("cloud", {})
+            .get("anthropic", {})
+            .get("api_key_env")
+            or "ANTHROPIC_API_KEY"
+        )
+    return (
+        config_dict.get("providers", {})
+        .get("cloud", {})
+        .get("openai_compatible", {})
+        .get("api_key_env")
+        or "OPENAI_API_KEY"
+    )
+
+
+def _deep_merge_dicts(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merged[key] = _deep_merge_dicts(base[key], value)
+        else:
+            merged[key] = value
+    return merged

@@ -1,4 +1,5 @@
 import uvicorn
+import yaml
 
 from routelabs_router import cli
 from routelabs_router.models import HealthResponse, ProviderHealth
@@ -381,3 +382,58 @@ def test_start_command_uses_anthropic_env_hint_when_anthropic_is_default_cloud(
     output = capsys.readouterr().out
     assert "Cloud provider (anthropic): not_configured" in output
     assert "Set `ANTHROPIC_API_KEY`" in output
+
+
+def test_init_command_creates_config_with_selected_profile_and_cloud(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "router.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "privacy-first",
+            "--cloud",
+            "anthropic",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    assert output_path.exists()
+    assert data["routing"]["default_mode"] == "privacy-first"
+    assert data["providers"]["cloud"]["default"] == "anthropic"
+    assert data["providers"]["cloud"]["anthropic"]["api_key_env"] == "ANTHROPIC_API_KEY"
+    assert "Created RouteLabs config" in output
+    assert "router quickstart --config" in output
+
+
+def test_init_command_refuses_to_overwrite_without_force(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "router.yaml"
+    output_path.write_text("existing: true\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    try:
+        cli.main()
+        raise AssertionError("expected SystemExit")
+    except SystemExit as exc:
+        assert exc.code == 1
+
+    output = capsys.readouterr().out
+    assert "Config already exists" in output
