@@ -9,6 +9,11 @@ Highlights:
 - `/v1/responses` support for newer OpenAI-style agent clients
 - `/v1/messages` support for Anthropic Messages-style clients
 - Anthropic cloud provider adapter and Anthropic-first cloud fallback support
+- MCP-style agent tool traces with approval-risk hints in route decisions and logs
+- configurable tool-risk policy patterns for approval, review, and trusted tools
+- `router demo agent-tools` for a zero-setup MCP-style tool-risk trace demo
+- OpenClaw and Hermes Agent demo presets, starter profiles, and gateway guides
+- README cleanup to surface integrations and remove duplicate chat/stats walkthroughs
 - stronger structured-output validation for `json_object` and practical `json_schema` constraints
 - semantic streaming events for both `/v1/responses` and `/v1/messages`
 - clearer docs and examples for OpenAI-compatible and Anthropic-compatible adoption paths

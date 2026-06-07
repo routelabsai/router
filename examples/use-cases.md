@@ -22,6 +22,12 @@ Use RouteLabs as an OpenAI-compatible routing layer underneath an OpenClaw setup
 
 See [openclaw.md](openclaw.md).
 
+## Hermes Agent gateway
+
+Use RouteLabs as an OpenAI-compatible model gateway underneath Hermes Agent so persistent local-agent workflows get local-first routing, escalation, logs, and tool-risk policy visibility.
+
+See [hermes-agent.md](hermes-agent.md).
+
 ## Unsloth-to-runtime routing
 
 Use Unsloth to train or export a model, then put RouteLabs above the local runtime so your fine-tuned model handles simple/private tasks locally and RouteLabs escalates only when needed.

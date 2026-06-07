@@ -16,6 +16,7 @@ from routelabs_router.adapters.ollama import OllamaChatAdapter
 from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import Config
 from routelabs_router.models import (
+    AgentToolTrace,
     AnthropicMessagesRequest,
     AnthropicMessagesResponse,
     AnthropicUsage,
@@ -74,10 +75,13 @@ class ChatService:
         privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
         effective_private = request.private or privacy.forced_local
         initial_route = self.router.decide(
-            RouteRequest(task=task, private=effective_private)
+            _route_request_from_chat(request, task, effective_private)
         )
         trace = DecisionTrace(
-            privacy=privacy, initial_route=initial_route, final_route=initial_route
+            privacy=privacy,
+            agent_tools=initial_route.agent_tools,
+            initial_route=initial_route,
+            final_route=initial_route,
         )
         requested_model = _requested_model_override(request.model)
         result = self._execute_route_or_fallback(
@@ -101,7 +105,10 @@ class ChatService:
             trace.verification = verification
 
             if verification.should_escalate:
-                cloud_route = self._cloud_route(initial_route.complexity)
+                cloud_route = self._cloud_route(
+                    initial_route.complexity,
+                    agent_tools=trace.agent_tools,
+                )
                 trace.escalated = True
                 trace.escalation_reason = verification.reason
                 try:
@@ -183,6 +190,7 @@ class ChatService:
         requested_model = _requested_model_override(request.model)
         trace = DecisionTrace(
             privacy=privacy,
+            agent_tools=route.agent_tools,
             initial_route=route,
             final_route=route,
         )
@@ -393,7 +401,11 @@ class ChatService:
             providers["anthropic"] = AnthropicChatAdapter(anthropic_config)
         return providers
 
-    def _cloud_route(self, complexity: str) -> RouteDecision:
+    def _cloud_route(
+        self,
+        complexity: str,
+        agent_tools: AgentToolTrace | None = None,
+    ) -> RouteDecision:
         return RouteDecision(
             target="cloud",
             provider=self.config.providers.cloud.default,
@@ -401,6 +413,7 @@ class ChatService:
             reason="verification requested escalation to a stronger remote model",
             complexity=complexity,
             verify=False,
+            agent_tools=agent_tools,
         )
 
     def get_stats(self):
@@ -427,7 +440,10 @@ class ChatService:
         except HTTPException as exc:
             if not allow_cross_target_fallback or route.target != "local":
                 raise exc
-            fallback_route = self._cloud_route(route.complexity)
+            fallback_route = self._cloud_route(
+                route.complexity,
+                agent_tools=trace.agent_tools,
+            )
             trace.escalated = True
             trace.escalation_reason = (
                 "local embeddings provider was unavailable, falling back to cloud"
@@ -514,7 +530,10 @@ class ChatService:
         except HTTPException as exc:
             if not allow_cross_target_fallback or route.target != "local":
                 raise exc
-            fallback_route = self._cloud_route(route.complexity)
+            fallback_route = self._cloud_route(
+                route.complexity,
+                agent_tools=trace.agent_tools,
+            )
             trace.escalated = True
             trace.escalation_reason = "local provider was unavailable, falling back to cloud"
             trace.final_route = fallback_route
@@ -695,6 +714,36 @@ def _task_from_messages(request: ChatCompletionRequest) -> str:
     if user_messages:
         return user_messages[-1]
     return request.messages[-1].content
+
+
+def _route_request_from_chat(
+    request: ChatCompletionRequest,
+    task: str,
+    private: bool,
+) -> RouteRequest:
+    tool_names = _tool_names_from_tools(request.tools)
+    return RouteRequest(
+        task=task,
+        private=private,
+        tool_names=tool_names,
+        tool_count=len(request.tools or []),
+        tool_choice=request.tool_choice,
+    )
+
+
+def _tool_names_from_tools(tools: list[dict[str, object]] | None) -> list[str]:
+    names: list[str] = []
+    for tool in tools or []:
+        name = tool.get("name")
+        if isinstance(name, str) and name:
+            names.append(name)
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict):
+            function_name = function.get("name")
+            if isinstance(function_name, str) and function_name:
+                names.append(function_name)
+    return names
 
 
 def _build_chat_response(

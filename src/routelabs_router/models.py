@@ -6,6 +6,21 @@ from pydantic import BaseModel, Field
 class RouteRequest(BaseModel):
     task: str = Field(..., min_length=1)
     private: bool = False
+    tool_names: list[str] = Field(default_factory=list)
+    tool_count: int | None = None
+    tool_choice: str | dict[str, Any] | None = None
+
+
+class AgentToolTrace(BaseModel):
+    detected: bool = False
+    tool_count: int = 0
+    tool_names: list[str] = Field(default_factory=list)
+    trusted_tool_names: list[str] = Field(default_factory=list)
+    mcp_like: bool = False
+    approval_required: bool = False
+    approval_reason: str | None = None
+    risk_level: str = "none"
+    reasons: list[str] = Field(default_factory=list)
 
 
 class RouteDecision(BaseModel):
@@ -19,6 +34,7 @@ class RouteDecision(BaseModel):
     provider_status: str | None = None
     fallback_available: bool | None = None
     fallback_status: str | None = None
+    agent_tools: AgentToolTrace | None = None
 
 
 class ChatMessage(BaseModel):
@@ -236,6 +252,7 @@ class ProviderAttempt(BaseModel):
 
 class DecisionTrace(BaseModel):
     privacy: "PrivacyDetectionResult | None" = None
+    agent_tools: AgentToolTrace | None = None
     initial_route: RouteDecision
     attempts: list[ProviderAttempt] = Field(default_factory=list)
     verification: VerificationResult | None = None

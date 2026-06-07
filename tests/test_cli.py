@@ -335,6 +335,92 @@ def test_quickstart_command_prints_adoption_paths(monkeypatch, capsys) -> None:
     assert "OPENAI_API_KEY" in output
 
 
+def test_demo_agent_tools_prints_mcp_approval_trace(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "demo", "agent-tools", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Agent Tool Demo" in output
+    assert "mcp__filesystem__write_file" in output
+    assert "Route: local" in output
+    assert "MCP-style: True" in output
+    assert "Risk level: high" in output
+    assert "Approval required: True" in output
+
+
+def test_demo_agent_tools_accepts_custom_task_and_tool(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "demo",
+            "agent-tools",
+            "--config",
+            "./config/router.yaml",
+            "--task",
+            "Search customer tickets",
+            "--tool-name",
+            "mcp__zendesk__search_tickets",
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "Search customer tickets" in output
+    assert "mcp__zendesk__search_tickets" in output
+    assert "Risk level: medium" in output
+    assert "Approval required: True" in output
+
+
+def test_demo_agent_tools_openclaw_preset(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "demo",
+            "agent-tools",
+            "--config",
+            "./config/router.yaml",
+            "--preset",
+            "openclaw",
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "Preset: openclaw" in output
+    assert "mcp__openclaw__shell_exec" in output
+    assert "Risk level: high" in output
+
+
+def test_demo_agent_tools_hermes_preset(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "demo",
+            "agent-tools",
+            "--config",
+            "./config/router.yaml",
+            "--preset",
+            "hermes",
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "Preset: hermes" in output
+    assert "mcp__hermes__send_message" in output
+    assert "Risk level: high" in output
+
+
 def test_start_command_uses_anthropic_env_hint_when_anthropic_is_default_cloud(
     monkeypatch, capsys
 ) -> None:
@@ -412,6 +498,30 @@ def test_init_command_creates_config_with_selected_profile_and_cloud(
     assert data["providers"]["cloud"]["anthropic"]["api_key_env"] == "ANTHROPIC_API_KEY"
     assert "Created RouteLabs config" in output
     assert "router quickstart --config" in output
+
+
+def test_init_command_creates_hermes_profile(monkeypatch, tmp_path, capsys) -> None:
+    output_path = tmp_path / "hermes-router.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "hermes-agent",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    assert data["routing"]["default_mode"] == "local-first"
+    assert "mcp__hermes__send_*" in data["policies"]["tools"]["approval_required_patterns"]
+    assert "mcp__hermes__read_memory" in data["policies"]["tools"]["trusted_tool_patterns"]
+    assert "Profile: hermes-agent" in output
 
 
 def test_init_command_refuses_to_overwrite_without_force(

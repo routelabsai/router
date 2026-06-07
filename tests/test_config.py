@@ -76,3 +76,25 @@ def test_load_config_reads_anthropic_api_key_from_environment(
     config = load_config(config_path)
 
     assert config.providers.cloud.anthropic.api_key == "anthropic-test-key"
+
+
+def test_load_config_deep_merges_tool_policy_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "router.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "policies": {
+                    "tools": {
+                        "trusted_tool_patterns": ["mcp__linear__search_*"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.policies.tools.trusted_tool_patterns == ["mcp__linear__search_*"]
+    assert "write" in config.policies.tools.approval_required_patterns
+    assert "search" in config.policies.tools.review_recommended_patterns

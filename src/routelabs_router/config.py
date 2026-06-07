@@ -51,9 +51,55 @@ class ComplexityPolicyConfig(BaseModel):
     local_max: str
 
 
+class ToolPolicyConfig(BaseModel):
+    approval_required_patterns: list[str] = []
+    review_recommended_patterns: list[str] = []
+    trusted_tool_patterns: list[str] = []
+
+
 class PoliciesConfig(BaseModel):
     privacy: PrivacyPolicyConfig
     complexity: ComplexityPolicyConfig
+    tools: ToolPolicyConfig
+
+
+DEFAULT_TOOL_APPROVAL_REQUIRED_PATTERNS = [
+    "delete",
+    "remove",
+    "drop",
+    "reset",
+    "write",
+    "edit",
+    "commit",
+    "push",
+    "deploy",
+    "merge",
+    "purchase",
+    "payment",
+    "pay",
+    "transfer",
+    "email",
+    "send",
+    "shell",
+    "exec",
+    "terminal",
+]
+
+
+DEFAULT_TOOL_REVIEW_RECOMMENDED_PATTERNS = [
+    "read",
+    "search",
+    "fetch",
+    "browser",
+    "web",
+    "database",
+    "db",
+    "filesystem",
+    "file",
+    "calendar",
+    "issue",
+    "ticket",
+]
 
 
 class TelemetryCostConfig(BaseModel):
@@ -113,6 +159,11 @@ DEFAULT_CONFIG = Config.model_validate(
         "policies": {
             "privacy": {"deny_cloud_when_private": True},
             "complexity": {"local_max": "medium"},
+            "tools": {
+                "approval_required_patterns": DEFAULT_TOOL_APPROVAL_REQUIRED_PATTERNS,
+                "review_recommended_patterns": DEFAULT_TOOL_REVIEW_RECOMMENDED_PATTERNS,
+                "trusted_tool_patterns": [],
+            },
         },
         "telemetry": {
             "costs": {

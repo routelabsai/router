@@ -40,13 +40,46 @@ def main() -> None:
     )
     quickstart_parser.add_argument("--config", default="./config/router.yaml")
 
+    demo_parser = subparsers.add_parser(
+        "demo", help="Show focused demos for RouteLabs routing behavior"
+    )
+    demo_subparsers = demo_parser.add_subparsers(dest="demo", required=True)
+    agent_tools_parser = demo_subparsers.add_parser(
+        "agent-tools",
+        help="Show MCP-style tool risk routing without starting a server",
+    )
+    agent_tools_parser.add_argument("--config", default="./config/router.yaml")
+    agent_tools_parser.add_argument(
+        "--preset",
+        default="filesystem",
+        choices=("filesystem", "openclaw", "hermes"),
+        help="Prebuilt agent tool-risk scenario to demo",
+    )
+    agent_tools_parser.add_argument(
+        "--task",
+        default=None,
+        help="Task text to route through the demo",
+    )
+    agent_tools_parser.add_argument(
+        "--tool-name",
+        default=None,
+        help="Tool name to analyze for MCP-style and approval-risk signals",
+    )
+
     init_parser = subparsers.add_parser(
         "init", help="Create a starter router config from a profile"
     )
     init_parser.add_argument(
         "--profile",
         default="balanced",
-        choices=("balanced", "local-first", "privacy-first", "openclaw", "unsloth-local"),
+        choices=(
+            "balanced",
+            "local-first",
+            "privacy-first",
+            "openclaw",
+            "hermes-agent",
+            "unsloth-local",
+        ),
     )
     init_parser.add_argument(
         "--cloud",
@@ -94,6 +127,15 @@ def main() -> None:
     elif args.command == "quickstart":
         config = load_config(Path(args.config))
         _print_quickstart(ChatService(config), config)
+    elif args.command == "demo" and args.demo == "agent-tools":
+        config = load_config(Path(args.config))
+        scenario = _agent_tools_demo_scenario(args.preset)
+        _print_agent_tools_demo(
+            config=config,
+            task=args.task or scenario["task"],
+            tool_name=args.tool_name or scenario["tool_name"],
+            preset=args.preset,
+        )
     elif args.command == "init":
         _write_init_config(
             profile=args.profile,
@@ -254,6 +296,73 @@ def _print_quickstart(service: ChatService, config) -> None:
     print('     -d \'{"model":"route-auto","messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}]}\'')
 
 
+def _agent_tools_demo_scenario(preset: str) -> dict[str, str]:
+    scenarios = {
+        "filesystem": {
+            "task": "Edit the repo config file",
+            "tool_name": "mcp__filesystem__write_file",
+        },
+        "openclaw": {
+            "task": "OpenClaw agent wants to deploy a fix and write a file",
+            "tool_name": "mcp__openclaw__shell_exec",
+        },
+        "hermes": {
+            "task": "Hermes agent wants to search memory and send a Slack update",
+            "tool_name": "mcp__hermes__send_message",
+        },
+    }
+    return scenarios[preset]
+
+
+def _print_agent_tools_demo(
+    config,
+    task: str,
+    tool_name: str,
+    preset: str,
+) -> None:
+    engine = RouterEngine(config)
+    decision = engine.decide(
+        RouteRequest(
+            task=task,
+            private=False,
+            tool_names=[tool_name],
+            tool_count=1,
+            tool_choice={"type": "function", "function": {"name": tool_name}},
+        )
+    )
+    agent_tools = decision.agent_tools
+
+    print("RouteLabs Agent Tool Demo")
+    print("Local-first runtime control for agent tool use")
+    print("")
+    print(f"Preset: {preset}")
+    print(f"Task: {task}")
+    print(f"Tool: {tool_name}")
+    print("")
+    print(f"Route: {decision.target}")
+    print(f"Provider: {decision.provider}")
+    print(f"Model: {decision.model}")
+    print(f"Reason: {decision.reason}")
+    print(f"Verify: {decision.verify}")
+
+    if agent_tools is None:
+        print("Agent tools: none detected")
+        return
+
+    print("")
+    print("Agent tool trace:")
+    print(f"- Detected: {agent_tools.detected}")
+    print(f"- MCP-style: {agent_tools.mcp_like}")
+    print(f"- Risk level: {agent_tools.risk_level}")
+    print(f"- Approval required: {agent_tools.approval_required}")
+    if agent_tools.approval_reason:
+        print(f"- Approval reason: {agent_tools.approval_reason}")
+    if agent_tools.reasons:
+        print("- Trace reasons:")
+        for reason in agent_tools.reasons:
+            print(f"  - {reason}")
+
+
 def _write_init_config(
     profile: str,
     cloud: str,
@@ -357,3 +466,7 @@ def _deep_merge_dicts(base: dict, override: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+if __name__ == "__main__":
+    main()

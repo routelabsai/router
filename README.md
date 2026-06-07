@@ -19,6 +19,7 @@ It is designed to feel like a practical gateway, not just a routing idea:
 - local-first execution with cloud fallback
 - verification-aware escalation
 - privacy-aware local preference
+- MCP-style agent tool traces and configurable tool-risk policy
 - startup checks, model visibility, and request-level performance traces
 
 It gives applications one endpoint that can decide:
@@ -30,8 +31,14 @@ It gives applications one endpoint that can decide:
 - why that decision was made
 - when verification forced an escalation
 - when privacy detection forced local execution
+- when declared agent tools should trigger approval or review
 
 The goal is simple: keep easy and sensitive work local, escalate only when needed, and stay compatible with the SDKs and agent tools people already use.
+
+Current agent-framework guides:
+
+- OpenClaw gateway: [examples/openclaw.md](examples/openclaw.md)
+- Hermes Agent gateway: [examples/hermes-agent.md](examples/hermes-agent.md)
 
 ## Why Try It
 
@@ -103,29 +110,6 @@ curl -X POST http://127.0.0.1:8000/v1/messages \
   }'
 ```
 
-## Install
-
-### Recommended user install
-
-```bash
-pip install routelabs-router
-router start
-```
-
-### Contributor install
-
-Clone the repo and install from source:
-
-```bash
-git clone https://github.com/routelabsai/router.git
-cd router
-conda create -n routelabs-router python=3.11 -y
-conda activate routelabs-router
-python -m pip install --upgrade pip setuptools wheel
-pip install -e '.[dev]'
-router start --reload
-```
-
 ## Why Use This
 
 Most teams today have one of these problems:
@@ -145,6 +129,7 @@ It is for teams who want:
 - live `Ollama` model discovery
 - embeddings support for retrieval and RAG-style workflows
 - tool-calling support for agent workflows
+- MCP-style tool trace detection with approval-risk hints for agent workflows
 - OpenAI-style streaming responses for chat completions
 - structured output and common OpenAI request-field passthrough
 - verification-aware escalation instead of naive “hard task -> expensive model”
@@ -370,6 +355,8 @@ This is an early but usable product foundation. The repository already includes:
 - OpenAI-style `/v1/embeddings` endpoint
 - OpenAI-compatible `/v1/models` discovery endpoint
 - tool-call passthrough for OpenAI-style clients
+- MCP-style agent tool traces and configurable tool-risk policies
+- zero-setup `router demo agent-tools` presets for filesystem, OpenClaw, and Hermes scenarios
 - OpenAI-style SSE streaming on `/v1/chat/completions`
 - structured-output passthrough and JSON-mode support
 - real local execution through `Ollama`
@@ -385,6 +372,7 @@ This is an early but usable product foundation. The repository already includes:
 - test coverage for routing and API behavior
 - example config profiles
 - example curl flows
+- OpenClaw and Hermes Agent gateway guides
 
 Still early:
 
@@ -463,6 +451,7 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 - `balanced.yaml`
 - `local-first.yaml`
 - `openclaw.yaml`
+- `hermes-agent.yaml`
 - `privacy-first.yaml`
 - `unsloth-local.yaml`
 
@@ -543,6 +532,19 @@ This shows:
 - installed `Ollama` models discovered live
 - whether each model is `installed`, `configured`, or `not_configured`
 
+### Demo agent tool risk tracing
+
+```bash
+router demo agent-tools
+```
+
+This prints a local planning trace for an MCP-style tool request, including:
+
+- route, provider, and model
+- MCP-style tool detection
+- approval-risk level and reason
+- trace reasons that can be inspected before any model or tool executes
+
 ### Test the API
 
 Health check:
@@ -620,6 +622,7 @@ curl http://127.0.0.1:8000/v1/models
 Ecosystem workflows:
 
 - OpenClaw: [examples/openclaw.md](examples/openclaw.md)
+- Hermes Agent: [examples/hermes-agent.md](examples/hermes-agent.md)
 - Unsloth: [examples/unsloth.md](examples/unsloth.md)
 
 Embeddings:
@@ -752,34 +755,41 @@ For a multi-step tool-calling example, see:
 - [`examples/agent-loop.py`](examples/agent-loop.py)
 - [`examples/agent-loop.md`](examples/agent-loop.md)
 
-The stats response includes simple estimated fields such as:
+For agent-framework gateway examples, see:
 
-- `estimated_total_cost_usd`
-- `estimated_baseline_cloud_cost_usd`
-- `estimated_cost_saved_usd`
-- `estimated_cloud_requests_avoided`
-
-OpenAI-style chat completion:
-
-```bash
-curl -X POST http://127.0.0.1:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages":[{"role":"user","content":"Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity."}],
-    "private":false
-  }'
-```
-
-If `Ollama` is running locally, the chat endpoint will execute against your configured local model.
-If `OPENAI_API_KEY` is set, high-complexity tasks can execute through the configured OpenAI-compatible cloud provider. If it is not set, cloud-routed chat requests return a clear configuration error.
-If the local provider is unavailable and the request is not forced to stay private, RouteLabs can now fall back to the cloud automatically and record that decision in the trace.
-The stats endpoint gives a simple first pass at the eventual cost/latency visibility story by showing how many requests stayed local, how many escalated, and how often verification failed.
-It also includes a lightweight savings estimate based on configurable per-request local and cloud cost assumptions.
-The logs endpoint exposes recent request-level decisions so users can inspect privacy detection, verification, escalation, final route choice, and estimated per-request cost directly.
+- [`examples/openclaw.md`](examples/openclaw.md)
+- [`examples/hermes-agent.md`](examples/hermes-agent.md)
 
 ### Tool calling
 
-RouteLabs now passes through OpenAI-style `tools` and `tool_choice` fields, which makes it more usable for agent loops and function-calling workflows.
+RouteLabs passes through OpenAI-style `tools` and `tool_choice` fields, which makes it more usable for agent loops and function-calling workflows.
+When requests declare tools, RouteLabs also adds an `agent_tools` trace to route decisions and request logs. MCP-style names such as `mcp__filesystem__write_file` are detected automatically, and risky actions such as `write`, `delete`, `deploy`, `send`, or `shell` are flagged with approval-risk hints before the request leaves the router layer.
+
+For a zero-setup CLI demo of this behavior, run:
+
+```bash
+router demo agent-tools
+```
+
+You can tune tool-risk policy in [`config/router.yaml`](config/router.yaml):
+
+```yaml
+policies:
+  tools:
+    approval_required_patterns:
+      - "write"
+      - "delete"
+      - "deploy"
+      - "mcp__billing__*"
+    review_recommended_patterns:
+      - "search"
+      - "database"
+      - "ticket"
+    trusted_tool_patterns:
+      - "mcp__linear__search_*"
+```
+
+Patterns match either by shell-style wildcard or substring. Trusted tools still appear in `agent_tools`, but their tool names are ignored for risk matching.
 
 Example:
 
@@ -929,6 +939,8 @@ curl -X POST http://127.0.0.1:8000/v1/route \
 - curl walkthrough: [`examples/curl-quickstart.md`](examples/curl-quickstart.md)
 - product framing and common scenarios: [`examples/use-cases.md`](examples/use-cases.md)
 - agent loop walkthrough: [`examples/agent-loop.md`](examples/agent-loop.md)
+- OpenClaw gateway: [`examples/openclaw.md`](examples/openclaw.md)
+- Hermes Agent gateway: [`examples/hermes-agent.md`](examples/hermes-agent.md)
 
 ## Example Routing Philosophy
 

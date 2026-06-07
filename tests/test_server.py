@@ -339,6 +339,65 @@ def test_responses_endpoint_returns_function_calls() -> None:
     assert any(item["type"] == "function_call" for item in data["output"])
 
 
+def test_chat_completions_exposes_agent_tool_trace_for_mcp_tools() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": ToolCallingProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Edit the repo config file"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "mcp__filesystem__write_file",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": "mcp__filesystem__write_file"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    agent_tools = data["trace"]["agent_tools"]
+    assert agent_tools["detected"] is True
+    assert agent_tools["mcp_like"] is True
+    assert agent_tools["approval_required"] is True
+    assert agent_tools["risk_level"] == "high"
+    assert data["route"]["agent_tools"] == agent_tools
+
+
+def test_route_endpoint_accepts_declared_agent_tools() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/route",
+        json={
+            "task": "Search tickets before answering",
+            "tool_names": ["mcp__zendesk__search_tickets"],
+            "tool_choice": "auto",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["agent_tools"]["detected"] is True
+    assert data["agent_tools"]["mcp_like"] is True
+    assert data["provider"] == "ollama"
+
+
 def test_responses_endpoint_accepts_top_level_input_text_items() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
