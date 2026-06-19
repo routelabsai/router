@@ -2,6 +2,7 @@ import uvicorn
 import yaml
 
 from routelabs_router import cli
+from routelabs_router.hardware import MachineProfile
 from routelabs_router.models import HealthResponse, ProviderHealth
 
 
@@ -331,8 +332,41 @@ def test_quickstart_command_prints_adoption_paths(monkeypatch, capsys) -> None:
     assert "RouteLabs Quickstart" in output
     assert "OpenAI-compatible client setup" in output
     assert "Anthropic-compatible client setup" in output
-    assert "ollama serve" in output
+    assert "   ollama serve" in output
     assert "OPENAI_API_KEY" in output
+
+
+def test_recommend_local_model_prints_machine_specific_pull_commands(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "detect_machine_profile",
+        lambda: MachineProfile(
+            os_name="Darwin",
+            arch="arm64",
+            cpu_count=10,
+            memory_gb=24.0,
+            accelerator="apple-silicon",
+            gpu_name="Apple Silicon unified memory",
+            gpu_memory_gb=24.0,
+        ),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "recommend", "local-model", "--workload", "agent"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Local Model Recommendation" in output
+    assert "Workload: agent" in output
+    assert "Apple Silicon unified memory" in output
+    assert "Model: qwen3:4b" in output
+    assert "ollama pull qwen3:4b" in output
+    assert "providers.local.ollama.model: qwen3:4b" in output
 
 
 def test_demo_agent_tools_prints_mcp_approval_trace(monkeypatch, capsys) -> None:
@@ -522,6 +556,34 @@ def test_init_command_creates_hermes_profile(monkeypatch, tmp_path, capsys) -> N
     assert "mcp__hermes__send_*" in data["policies"]["tools"]["approval_required_patterns"]
     assert "mcp__hermes__read_memory" in data["policies"]["tools"]["trusted_tool_patterns"]
     assert "Profile: hermes-agent" in output
+
+
+def test_init_command_creates_litellm_proxy_profile(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "litellm-router.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "litellm-proxy",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    provider = data["providers"]["cloud"]["openai_compatible"]
+    assert provider["base_url"] == "http://127.0.0.1:4000/v1"
+    assert provider["api_key_env"] == "LITELLM_MASTER_KEY"
+    assert provider["requires_api_key"] is False
+    assert "OpenAI-compatible proxy" in output
+    assert "Profile: litellm-proxy" in output
 
 
 def test_init_command_refuses_to_overwrite_without_force(

@@ -21,6 +21,8 @@ It is designed to feel like a practical gateway, not just a routing idea:
 - privacy-aware local preference
 - MCP-style agent tool traces and configurable tool-risk policy
 - startup checks, model visibility, and request-level performance traces
+- local runtime choice across `Ollama` and OpenAI-compatible local servers
+  such as `llama.cpp`, LM Studio, and vLLM
 
 It gives applications one endpoint that can decide:
 
@@ -45,7 +47,7 @@ Current agent-framework guides:
 - You already have OpenAI-style or Anthropic-style clients and want to switch by changing `base_url`
 - You want local-first routing without losing cloud fallback
 - You want to see why a request stayed local, escalated, or failed over
-- You want one runtime layer above `Ollama`, `llama.cpp`, OpenAI-compatible backends, and Anthropic
+- You want one runtime layer above `Ollama`, `llama.cpp`, LM Studio, vLLM, OpenAI-compatible backends, and Anthropic
 
 ## Who This Is For
 
@@ -81,6 +83,7 @@ Install from PyPI, start the runtime, and send one request. Cloud keys are optio
 
 ```bash
 pip install routelabs-router
+router recommend local-model
 export OPENAI_API_KEY=your_api_key_here  # optional, enables cloud execution
 export ANTHROPIC_API_KEY=your_api_key_here  # optional, enables Anthropic cloud execution
 router start --reload
@@ -127,6 +130,7 @@ It is for teams who want:
 - `/v1/messages` support for Anthropic-style clients
 - OpenAI-compatible model discovery for existing SDKs and UIs
 - live `Ollama` model discovery
+- local OpenAI-compatible runtime support for `llama.cpp`, LM Studio, vLLM, and similar servers
 - embeddings support for retrieval and RAG-style workflows
 - tool-calling support for agent workflows
 - MCP-style tool trace detection with approval-risk hints for agent workflows
@@ -206,9 +210,59 @@ app / agent / extension
         +--> verification hooks
         |
         +--> Ollama
-        +--> llama.cpp
+        +--> OpenAI-compatible local servers
+             (llama.cpp, LM Studio, vLLM)
         +--> cloud provider
 ```
+
+## Use Another Local Runtime
+
+Ollama is the default local provider, but RouteLabs can also use local servers
+that expose OpenAI-compatible `/v1/chat/completions`, `/v1/embeddings`, and
+`/v1/models` endpoints.
+
+## Recommend A Local Model
+
+RouteLabs can inspect the current machine and suggest a practical Ollama model
+for local-first use:
+
+```bash
+router recommend local-model
+router recommend local-model --workload coding
+router recommend local-model --workload agent
+```
+
+It reports CPU cores, RAM, basic GPU/accelerator signals, recommended chat and
+embedding models, `ollama pull` commands, and the config keys to update. The
+command does not download model files by itself.
+
+For `llama.cpp` server:
+
+```yaml
+providers:
+  local:
+    default: "llamacpp"
+    llamacpp:
+      base_url: "http://127.0.0.1:8080/v1"
+      model: "qwen3-4b-instruct"
+      embedding_model: "qwen3-embedding"
+```
+
+For LM Studio, use the same provider block and point it at LM Studio's local
+server:
+
+```yaml
+providers:
+  local:
+    default: "llamacpp"
+    llamacpp:
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "local-model"
+```
+
+After that, keep using `model="route-auto"` from your existing OpenAI-style or
+Anthropic-style client. RouteLabs still handles privacy-aware routing,
+verification-aware escalation, traces, and fallback policy.
 
 ## Quick Demo
 
@@ -261,7 +315,9 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 
 If `Ollama` is running locally, that request executes against your configured local model.
 If `OPENAI_API_KEY` is set, high-complexity requests can route through the configured OpenAI-compatible cloud provider.
-The response includes a trace showing the initial route, verification result, and any escalation.
+The response includes a trace showing the initial route, verification result,
+any escalation, and a short summary such as `Stayed local on ollama/qwen3:4b`
+or `Fell back to cloud on openai-compatible/gpt-4.1-mini`.
 
 Newer OpenAI-style agent clients can also use `/v1/responses`:
 
@@ -452,6 +508,7 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 - `local-first.yaml`
 - `openclaw.yaml`
 - `hermes-agent.yaml`
+- `litellm-proxy.yaml`
 - `privacy-first.yaml`
 - `unsloth-local.yaml`
 
@@ -468,6 +525,18 @@ router init --profile balanced --cloud anthropic
 ```
 
 By default this writes to [`config/router.yaml`](config/router.yaml). Use `--output` to write somewhere else or `--force` to overwrite an existing file.
+
+To put RouteLabs in front of a local LiteLLM proxy:
+
+```bash
+router init --profile litellm-proxy --output ./config/router.yaml --force
+litellm --model openai/gpt-4.1-mini
+router start
+```
+
+The profile points RouteLabs cloud fallback at `http://127.0.0.1:4000/v1`.
+If your LiteLLM proxy uses virtual keys, set `LITELLM_MASTER_KEY`; otherwise the
+profile works without requiring a bearer token.
 
 ### Start the runtime
 
@@ -599,6 +668,7 @@ It includes:
 - average embeddings latency
 - average local vs cloud latency
 - average completion token speed for chat requests
+- estimated cloud spend
 
 Recent route logs:
 
@@ -611,7 +681,69 @@ Each log entry includes:
 - request kind
 - total request latency
 - completion tokens per second when available
+- a plain-language decision summary
 - per-attempt timing in the trace
+
+Cloud spend guardrail:
+
+```yaml
+telemetry:
+  cloud_budget_usd: 1.00
+```
+
+When set, RouteLabs blocks cloud fallback or escalation once the next cloud
+request would exceed the configured budget. Verification can still return the
+local answer with a trace explaining that cloud escalation was budget-blocked.
+`/v1/route` reports cloud fallback as `budget_exhausted` when applicable.
+
+Per-request fallback control:
+
+```json
+{
+  "model": "route-auto",
+  "allow_fallbacks": false,
+  "messages": [{"role": "user", "content": "Summarize this locally."}]
+}
+```
+
+When `allow_fallbacks` is `false`, RouteLabs will not use cloud fallback after
+a local provider failure and will not escalate weak local answers after
+verification. The trace explains that fallbacks were disabled by the request.
+`/v1/route` reports cloud fallback as `disabled_by_request`.
+
+Per-request cloud cost cap:
+
+```json
+{
+  "model": "route-auto",
+  "max_cloud_cost_usd": 0.01,
+  "messages": [{"role": "user", "content": "Use cloud only if it is cheap."}]
+}
+```
+
+When `max_cloud_cost_usd` is set, RouteLabs blocks cloud fallback or escalation
+if the configured estimated cloud request cost is higher than the request cap.
+`/v1/route` reports cloud fallback as `max_cloud_cost_exceeded`.
+
+Optional OpenTelemetry export:
+
+```bash
+pip install "routelabs-router[observability]"
+```
+
+Then enable the trace hook:
+
+```yaml
+telemetry:
+  opentelemetry:
+    enabled: true
+    include_task_preview: false
+```
+
+RouteLabs emits one span per request with route, provider, model, privacy,
+verification, tool-risk, latency, and summary attributes. The hook uses the
+standard OpenTelemetry API, so teams can configure their own SDK/exporter for
+Phoenix, Jaeger, Grafana, Honeycomb, or any OTLP-compatible collector.
 
 Model discovery:
 
@@ -764,6 +896,8 @@ For agent-framework gateway examples, see:
 
 RouteLabs passes through OpenAI-style `tools` and `tool_choice` fields, which makes it more usable for agent loops and function-calling workflows.
 When requests declare tools, RouteLabs also adds an `agent_tools` trace to route decisions and request logs. MCP-style names such as `mcp__filesystem__write_file` are detected automatically, and risky actions such as `write`, `delete`, `deploy`, `send`, or `shell` are flagged with approval-risk hints before the request leaves the router layer.
+
+RouteLabs also inspects tool descriptions for prompt-injection-like metadata such as `ignore previous instructions`, hidden instructions, credential exfiltration language, or safety bypass language. Suspicious tool metadata is marked as high risk in `agent_tools` before any external tool execution happens elsewhere.
 
 For a zero-setup CLI demo of this behavior, run:
 

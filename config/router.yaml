@@ -14,12 +14,14 @@ providers:
       base_url: "http://127.0.0.1:11434"
       model: "qwen3:4b"
       embedding_model: "embeddinggemma"
+      requires_api_key: false
       timeout_seconds: 60
       max_retries: 2
     llamacpp:
-      base_url: "http://127.0.0.1:8080"
+      base_url: "http://127.0.0.1:8080/v1"
       model: "qwen3-4b-instruct"
       embedding_model: "qwen3-embedding"
+      requires_api_key: false
       timeout_seconds: 60
       max_retries: 1
   cloud:
@@ -74,6 +76,10 @@ policies:
     trusted_tool_patterns: []
 
 telemetry:
+  cloud_budget_usd: null
   costs:
     local_request_cost_usd: 0.0002
     cloud_request_cost_usd: 0.02
+  opentelemetry:
+    enabled: false
+    include_task_preview: false

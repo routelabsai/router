@@ -11,6 +11,7 @@ class ProviderConfig(BaseModel):
     embedding_model: str | None = None
     api_key_env: str | None = None
     api_key: str | None = None
+    requires_api_key: bool = True
     timeout_seconds: float = 60.0
     max_retries: int = 1
 
@@ -107,8 +108,15 @@ class TelemetryCostConfig(BaseModel):
     cloud_request_cost_usd: float
 
 
+class OpenTelemetryConfig(BaseModel):
+    enabled: bool = False
+    include_task_preview: bool = False
+
+
 class TelemetryConfig(BaseModel):
     costs: TelemetryCostConfig
+    cloud_budget_usd: float | None = None
+    opentelemetry: OpenTelemetryConfig = OpenTelemetryConfig()
 
 
 class Config(BaseModel):
@@ -134,11 +142,13 @@ DEFAULT_CONFIG = Config.model_validate(
                     "base_url": "http://127.0.0.1:11434",
                     "model": "qwen3:4b",
                     "embedding_model": "embeddinggemma",
+                    "requires_api_key": False,
                 },
                 "llamacpp": {
-                    "base_url": "http://127.0.0.1:8080",
+                    "base_url": "http://127.0.0.1:8080/v1",
                     "model": "qwen3-4b-instruct",
                     "embedding_model": "qwen3-embedding",
+                    "requires_api_key": False,
                 },
             },
             "cloud": {
@@ -166,10 +176,15 @@ DEFAULT_CONFIG = Config.model_validate(
             },
         },
         "telemetry": {
+            "cloud_budget_usd": None,
             "costs": {
                 "local_request_cost_usd": 0.0002,
                 "cloud_request_cost_usd": 0.02,
-            }
+            },
+            "opentelemetry": {
+                "enabled": False,
+                "include_task_preview": False,
+            },
         },
     }
 )

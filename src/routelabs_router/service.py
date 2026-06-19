@@ -25,6 +25,7 @@ from routelabs_router.models import (
     ChatCompletionResponse,
     ChatMessage,
     DecisionTrace,
+    DecisionSummary,
     EmbeddingsRequest,
     EmbeddingsResponse,
     HealthResponse,
@@ -43,6 +44,7 @@ from routelabs_router.models import (
     RouteDecision,
     RouteRequest,
 )
+from routelabs_router.observability import OpenTelemetryRouteTracer
 from routelabs_router.privacy import HeuristicPrivacyDetector
 from routelabs_router.router import RouterEngine
 from routelabs_router.telemetry import InMemoryTelemetry
@@ -58,6 +60,7 @@ class ChatService:
         verifier: HeuristicVerifier | None = None,
         telemetry: InMemoryTelemetry | None = None,
         privacy_detector: HeuristicPrivacyDetector | None = None,
+        route_tracer: OpenTelemetryRouteTracer | None = None,
     ) -> None:
         self.config = config
         self.router = router or RouterEngine(config)
@@ -65,6 +68,9 @@ class ChatService:
         self.verifier = verifier or HeuristicVerifier()
         self.telemetry = telemetry or InMemoryTelemetry(config.telemetry.costs)
         self.privacy_detector = privacy_detector or HeuristicPrivacyDetector()
+        self.route_tracer = route_tracer or OpenTelemetryRouteTracer(
+            config.telemetry.opentelemetry
+        )
 
     def create_chat_completion(
         self, request: ChatCompletionRequest
@@ -89,7 +95,8 @@ class ChatService:
             route=initial_route,
             trace=trace,
             requested_model=requested_model,
-            allow_cross_target_fallback=not effective_private,
+            allow_cross_target_fallback=(not effective_private and request.allow_fallbacks),
+            max_cloud_cost_usd=request.max_cloud_cost_usd,
         )
 
         if (
@@ -104,7 +111,7 @@ class ChatService:
             )
             trace.verification = verification
 
-            if verification.should_escalate:
+            if verification.should_escalate and request.allow_fallbacks:
                 cloud_route = self._cloud_route(
                     initial_route.complexity,
                     agent_tools=trace.agent_tools,
@@ -117,6 +124,7 @@ class ChatService:
                         route=cloud_route,
                         trace=trace,
                         requested_model=requested_model,
+                        max_cloud_cost_usd=request.max_cloud_cost_usd,
                     )
                     trace.final_route = cloud_route
                 except HTTPException as exc:
@@ -125,6 +133,10 @@ class ChatService:
                         "verification requested escalation but the cloud route failed: "
                         f"{exc.detail}"
                     )
+            elif verification.should_escalate:
+                trace.escalation_reason = (
+                    "verification requested escalation but request disabled fallbacks"
+                )
 
         response = _build_chat_response(
             request_id=request_id,
@@ -138,6 +150,7 @@ class ChatService:
         )
         trace.total_latency_ms = total_latency_ms
         trace.completion_tokens_per_second = completion_tokens_per_second
+        trace.summary = _build_decision_summary(trace)
         self.telemetry.record(
             request_id=request_id,
             request_kind="chat",
@@ -147,6 +160,14 @@ class ChatService:
             auto_private=privacy.detected and not request.private,
             total_latency_ms=total_latency_ms,
             completion_tokens_per_second=completion_tokens_per_second,
+        )
+        self.route_tracer.record(
+            request_id=request_id,
+            request_kind="chat",
+            task_preview=_task_preview(task),
+            trace=trace,
+            is_private=effective_private,
+            auto_private=privacy.detected and not request.private,
         )
         return response
 
@@ -168,6 +189,17 @@ class ChatService:
         fallback_available, fallback_status = self._provider_readiness(
             self.config.providers.cloud.default
         )
+        if not request.allow_fallbacks:
+            fallback_available = False
+            fallback_status = "disabled_by_request"
+        if fallback_available and not self._max_cloud_cost_allows_request(
+            request.max_cloud_cost_usd
+        ):
+            fallback_available = False
+            fallback_status = "max_cloud_cost_exceeded"
+        if fallback_available and not self._cloud_budget_allows_request():
+            fallback_available = False
+            fallback_status = "budget_exhausted"
         if decision.target == "cloud":
             fallback_available = None
             fallback_status = None
@@ -186,7 +218,14 @@ class ChatService:
         task = _task_from_embedding_input(request.input)
         privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
         effective_private = request.private or privacy.forced_local
-        route = self.router.decide(RouteRequest(task=task, private=effective_private))
+        route = self.router.decide(
+            RouteRequest(
+                task=task,
+                private=effective_private,
+                allow_fallbacks=request.allow_fallbacks,
+                max_cloud_cost_usd=request.max_cloud_cost_usd,
+            )
+        )
         requested_model = _requested_model_override(request.model)
         trace = DecisionTrace(
             privacy=privacy,
@@ -199,11 +238,13 @@ class ChatService:
             route=route,
             trace=trace,
             requested_model=requested_model,
-            allow_cross_target_fallback=not effective_private,
+            allow_cross_target_fallback=(not effective_private and request.allow_fallbacks),
+            max_cloud_cost_usd=request.max_cloud_cost_usd,
         )
         trace.final_route = final_route
         total_latency_ms = _elapsed_ms(started)
         trace.total_latency_ms = total_latency_ms
+        trace.summary = _build_decision_summary(trace)
         self.telemetry.record(
             request_id=request_id,
             request_kind="embeddings",
@@ -212,6 +253,14 @@ class ChatService:
             is_private=effective_private,
             auto_private=privacy.detected and not request.private,
             total_latency_ms=total_latency_ms,
+        )
+        self.route_tracer.record(
+            request_id=request_id,
+            request_kind="embeddings",
+            task_preview=_task_preview(task),
+            trace=trace,
+            is_private=effective_private,
+            auto_private=privacy.detected and not request.private,
         )
         return EmbeddingsResponse(
             data=result.data,
@@ -225,6 +274,8 @@ class ChatService:
         installed_lookup = {
             item["id"]: item for item in ollama_inventory
         }
+        llamacpp_inventory = self._openai_compatible_model_inventory("llamacpp")
+        llamacpp_lookup = {item["id"]: item for item in llamacpp_inventory}
         models = [
             ModelCard(
                 id="route-auto",
@@ -282,8 +333,12 @@ class ChatService:
                 owned_by="routelabs-local",
                 provider="llamacpp",
                 source="configured",
-                installed=None,
-                status="configured",
+                installed=self.config.providers.local.llamacpp.model in llamacpp_lookup,
+                status=(
+                    "ready"
+                    if self.config.providers.local.llamacpp.model in llamacpp_lookup
+                    else "configured"
+                ),
             ),
             ModelCard(
                 id=self.config.providers.local.llamacpp.embedding_model
@@ -291,18 +346,32 @@ class ChatService:
                 owned_by="routelabs-local",
                 provider="llamacpp",
                 source="configured",
-                installed=None,
-                status="configured",
+                installed=(
+                    (
+                        self.config.providers.local.llamacpp.embedding_model
+                        or self.config.providers.local.llamacpp.model
+                    )
+                    in llamacpp_lookup
+                ),
+                status=(
+                    "ready"
+                    if (
+                        self.config.providers.local.llamacpp.embedding_model
+                        or self.config.providers.local.llamacpp.model
+                    )
+                    in llamacpp_lookup
+                    else "configured"
+                ),
             ),
             ModelCard(
                 id=self.config.providers.cloud.openai_compatible.model,
                 owned_by="routelabs-cloud",
                 provider="openai-compatible",
                 source="configured",
-                installed=self.config.providers.cloud.openai_compatible.api_key is not None,
+                installed=self._openai_compatible_cloud_configured(),
                 status=(
                     "configured"
-                    if self.config.providers.cloud.openai_compatible.api_key
+                    if self._openai_compatible_cloud_configured()
                     else "not_configured"
                 ),
             ),
@@ -312,10 +381,10 @@ class ChatService:
                 owned_by="routelabs-cloud",
                 provider="openai-compatible",
                 source="configured",
-                installed=self.config.providers.cloud.openai_compatible.api_key is not None,
+                installed=self._openai_compatible_cloud_configured(),
                 status=(
                     "configured"
-                    if self.config.providers.cloud.openai_compatible.api_key
+                    if self._openai_compatible_cloud_configured()
                     else "not_configured"
                 ),
             ),
@@ -343,6 +412,17 @@ class ChatService:
                 size_bytes=item.get("size_bytes"),
             )
             for item in ollama_inventory
+        )
+        models.extend(
+            ModelCard(
+                id=item["id"],
+                owned_by="routelabs-local",
+                provider="llamacpp",
+                source="discovered",
+                installed=True,
+                status="ready",
+            )
+            for item in llamacpp_inventory
         )
         deduped: list[ModelCard] = []
         seen: dict[str, int] = {}
@@ -392,14 +472,26 @@ class ChatService:
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
             "ollama": OllamaChatAdapter(self.config.providers.local.ollama),
+            "llamacpp": OpenAICompatibleChatAdapter(
+                self.config.providers.local.llamacpp
+            ),
         }
         cloud_config = self.config.providers.cloud.openai_compatible
-        if cloud_config.api_key:
+        if self._provider_auth_configured(cloud_config):
             providers["openai-compatible"] = OpenAICompatibleChatAdapter(cloud_config)
         anthropic_config = self.config.providers.cloud.anthropic
         if anthropic_config.api_key:
             providers["anthropic"] = AnthropicChatAdapter(anthropic_config)
         return providers
+
+    def _openai_compatible_cloud_configured(self) -> bool:
+        return self._provider_auth_configured(
+            self.config.providers.cloud.openai_compatible
+        )
+
+    @staticmethod
+    def _provider_auth_configured(provider_config) -> bool:
+        return bool(provider_config.api_key) or not provider_config.requires_api_key
 
     def _cloud_route(
         self,
@@ -422,6 +514,45 @@ class ChatService:
     def get_recent_logs(self):
         return self.telemetry.recent_logs()
 
+    def _cloud_budget_allows_request(self) -> bool:
+        budget = self.config.telemetry.cloud_budget_usd
+        if budget is None:
+            return True
+        projected_cloud_cost = (
+            self.telemetry.snapshot().estimated_cloud_cost_usd
+            + self.config.telemetry.costs.cloud_request_cost_usd
+        )
+        return projected_cloud_cost <= budget
+
+    def _max_cloud_cost_allows_request(self, max_cloud_cost_usd: float | None) -> bool:
+        if max_cloud_cost_usd is None:
+            return True
+        return self.config.telemetry.costs.cloud_request_cost_usd <= max_cloud_cost_usd
+
+    def _max_cloud_cost_error(self, max_cloud_cost_usd: float) -> HTTPException:
+        next_cost = self.config.telemetry.costs.cloud_request_cost_usd
+        return HTTPException(
+            status_code=402,
+            detail=(
+                "cloud request exceeds max_cloud_cost_usd: "
+                f"next request costs ${next_cost:.6f}, "
+                f"max is ${max_cloud_cost_usd:.6f}"
+            ),
+        )
+
+    def _cloud_budget_error(self) -> HTTPException:
+        budget = self.config.telemetry.cloud_budget_usd
+        spent = self.telemetry.snapshot().estimated_cloud_cost_usd
+        next_cost = self.config.telemetry.costs.cloud_request_cost_usd
+        return HTTPException(
+            status_code=402,
+            detail=(
+                "cloud budget exhausted: "
+                f"spent ${spent:.6f}, next request costs ${next_cost:.6f}, "
+                f"budget is ${budget:.6f}"
+            ),
+        )
+
     def _execute_embeddings_route_or_fallback(
         self,
         request: EmbeddingsRequest,
@@ -429,6 +560,7 @@ class ChatService:
         trace: DecisionTrace,
         requested_model: str | None,
         allow_cross_target_fallback: bool,
+        max_cloud_cost_usd: float | None,
     ) -> tuple[RouteDecision, ProviderEmbeddingResult]:
         try:
             return route, self._execute_embeddings_route(
@@ -436,6 +568,7 @@ class ChatService:
                 route=route,
                 trace=trace,
                 requested_model=requested_model,
+                max_cloud_cost_usd=max_cloud_cost_usd,
             )
         except HTTPException as exc:
             if not allow_cross_target_fallback or route.target != "local":
@@ -454,6 +587,7 @@ class ChatService:
                 route=fallback_route,
                 trace=trace,
                 requested_model=requested_model,
+                max_cloud_cost_usd=max_cloud_cost_usd,
             )
 
     def _execute_embeddings_route(
@@ -462,7 +596,15 @@ class ChatService:
         route: RouteDecision,
         trace: DecisionTrace,
         requested_model: str | None,
+        max_cloud_cost_usd: float | None = None,
     ) -> ProviderEmbeddingResult:
+        if route.target == "cloud" and not self._max_cloud_cost_allows_request(
+            max_cloud_cost_usd
+        ):
+            raise self._max_cloud_cost_error(max_cloud_cost_usd or 0)
+        if route.target == "cloud" and not self._cloud_budget_allows_request():
+            raise self._cloud_budget_error()
+
         provider = self.providers.get(route.provider)
         if provider is None:
             raise HTTPException(
@@ -519,6 +661,7 @@ class ChatService:
         trace: DecisionTrace,
         requested_model: str | None,
         allow_cross_target_fallback: bool,
+        max_cloud_cost_usd: float | None,
     ) -> ProviderResult:
         try:
             return self._execute_route(
@@ -526,6 +669,7 @@ class ChatService:
                 route=route,
                 trace=trace,
                 requested_model=requested_model,
+                max_cloud_cost_usd=max_cloud_cost_usd,
             )
         except HTTPException as exc:
             if not allow_cross_target_fallback or route.target != "local":
@@ -542,6 +686,7 @@ class ChatService:
                 route=fallback_route,
                 trace=trace,
                 requested_model=requested_model,
+                max_cloud_cost_usd=max_cloud_cost_usd,
             )
 
     def _execute_route(
@@ -550,7 +695,15 @@ class ChatService:
         route: RouteDecision,
         trace: DecisionTrace,
         requested_model: str | None,
+        max_cloud_cost_usd: float | None = None,
     ) -> ProviderResult:
+        if route.target == "cloud" and not self._max_cloud_cost_allows_request(
+            max_cloud_cost_usd
+        ):
+            raise self._max_cloud_cost_error(max_cloud_cost_usd or 0)
+        if route.target == "cloud" and not self._cloud_budget_allows_request():
+            raise self._cloud_budget_error()
+
         provider = self.providers.get(route.provider)
         if provider is None:
             raise HTTPException(
@@ -672,6 +825,44 @@ class ChatService:
             )
         return inventory
 
+    def _openai_compatible_model_inventory(
+        self,
+        provider_name: str,
+    ) -> list[dict[str, object]]:
+        if provider_name == "llamacpp":
+            provider = self.providers.get(provider_name)
+            if provider is not None and not isinstance(
+                provider, OpenAICompatibleChatAdapter
+            ):
+                return []
+            base_url = self.config.providers.local.llamacpp.base_url.rstrip("/")
+        elif provider_name == "openai-compatible":
+            provider = self.providers.get(provider_name)
+            if provider is not None and not isinstance(
+                provider, OpenAICompatibleChatAdapter
+            ):
+                return []
+            if not self._openai_compatible_cloud_configured():
+                return []
+            base_url = self.config.providers.cloud.openai_compatible.base_url.rstrip("/")
+        else:
+            return []
+
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                response = client.get(f"{base_url}/models")
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPError, ValueError):
+            return []
+
+        inventory: list[dict[str, object]] = []
+        for item in data.get("data", []):
+            model_id = item.get("id")
+            if isinstance(model_id, str) and model_id:
+                inventory.append({"id": model_id})
+        return inventory
+
     def _provider_readiness(self, provider_name: str) -> tuple[bool, str]:
         if provider_name == "ollama":
             provider = self.providers.get(provider_name)
@@ -686,13 +877,28 @@ class ChatService:
             except httpx.HTTPError:
                 return False, "unreachable"
 
+        if provider_name == "llamacpp":
+            provider = self.providers.get(provider_name)
+            if provider is not None and not isinstance(
+                provider, OpenAICompatibleChatAdapter
+            ):
+                return True, "ready"
+            base_url = self.config.providers.local.llamacpp.base_url.rstrip("/")
+            try:
+                with httpx.Client(timeout=1.0) as client:
+                    response = client.get(f"{base_url}/models")
+                    response.raise_for_status()
+                return True, "ready"
+            except httpx.HTTPError:
+                return False, "unreachable"
+
         if provider_name == "openai-compatible":
             provider = self.providers.get(provider_name)
             if provider is not None and not isinstance(
                 provider, OpenAICompatibleChatAdapter
             ):
                 return True, "configured"
-            if not self.config.providers.cloud.openai_compatible.api_key:
+            if not self._openai_compatible_cloud_configured():
                 return False, "not_configured"
             return True, "configured"
 
@@ -725,7 +931,10 @@ def _route_request_from_chat(
     return RouteRequest(
         task=task,
         private=private,
+        allow_fallbacks=request.allow_fallbacks,
+        max_cloud_cost_usd=request.max_cloud_cost_usd,
         tool_names=tool_names,
+        tool_descriptions=_tool_descriptions_from_tools(request.tools),
         tool_count=len(request.tools or []),
         tool_choice=request.tool_choice,
     )
@@ -744,6 +953,29 @@ def _tool_names_from_tools(tools: list[dict[str, object]] | None) -> list[str]:
             if isinstance(function_name, str) and function_name:
                 names.append(function_name)
     return names
+
+
+def _tool_descriptions_from_tools(
+    tools: list[dict[str, object]] | None,
+) -> dict[str, str]:
+    descriptions: dict[str, str] = {}
+    for tool in tools or []:
+        name = tool.get("name")
+        description = tool.get("description")
+        if isinstance(name, str) and isinstance(description, str) and description:
+            descriptions[name] = description
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict):
+            function_name = function.get("name")
+            function_description = function.get("description")
+            if (
+                isinstance(function_name, str)
+                and isinstance(function_description, str)
+                and function_description
+            ):
+                descriptions[function_name] = function_description
+    return descriptions
 
 
 def _build_chat_response(
@@ -771,6 +1003,65 @@ def _build_chat_response(
         route=route,
         trace=trace,
     )
+
+
+def _build_decision_summary(trace: DecisionTrace) -> DecisionSummary:
+    route = trace.final_route
+    reason = trace.escalation_reason or route.reason
+    privacy = "not_detected"
+    if trace.privacy is not None and trace.privacy.detected:
+        privacy = "detected:" + ",".join(trace.privacy.categories)
+
+    verification = "not_run"
+    if trace.verification is not None:
+        verification = "passed" if trace.verification.passed else "failed"
+        if trace.verification.should_escalate:
+            verification = (
+                "failed_escalated"
+                if trace.escalated
+                else "failed_escalation_unavailable"
+            )
+
+    agent_tool_risk = "none"
+    if trace.agent_tools is not None and trace.agent_tools.detected:
+        agent_tool_risk = trace.agent_tools.risk_level
+
+    headline = _decision_headline(
+        initial_target=trace.initial_route.target,
+        final_target=route.target,
+        provider=route.provider,
+        model=route.model,
+        escalated=trace.escalated,
+        reason=reason,
+    )
+    return DecisionSummary(
+        headline=headline,
+        target=route.target,
+        provider=route.provider,
+        model=route.model,
+        reason=reason,
+        privacy=privacy,
+        verification=verification,
+        agent_tool_risk=agent_tool_risk,
+        attempts=len(trace.attempts),
+    )
+
+
+def _decision_headline(
+    initial_target: str,
+    final_target: str,
+    provider: str,
+    model: str,
+    escalated: bool,
+    reason: str,
+) -> str:
+    if escalated and initial_target == "local" and final_target == "cloud":
+        if "unavailable" in reason or "falling back" in reason:
+            return f"Fell back to cloud on {provider}/{model}"
+        return f"Escalated to cloud on {provider}/{model}"
+    if final_target == "local":
+        return f"Stayed local on {provider}/{model}"
+    return f"Used cloud on {provider}/{model}"
 
 
 def _build_responses_response(
@@ -881,6 +1172,8 @@ def _responses_request_to_chat_request(
         messages=messages,
         model=request.model,
         private=request.private,
+        allow_fallbacks=request.allow_fallbacks,
+        max_cloud_cost_usd=request.max_cloud_cost_usd,
         stream=request.stream,
         response_format=response_format,
         tools=request.tools,
@@ -909,6 +1202,8 @@ def _anthropic_request_to_chat_request(
         messages=messages,
         model=request.model,
         private=request.private,
+        allow_fallbacks=request.allow_fallbacks,
+        max_cloud_cost_usd=request.max_cloud_cost_usd,
         stream=request.stream,
         tools=_map_anthropic_tools_to_openai(request.tools),
         tool_choice=_map_anthropic_tool_choice_to_openai(request.tool_choice),

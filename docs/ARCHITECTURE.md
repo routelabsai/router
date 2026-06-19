@@ -54,14 +54,20 @@ Today the repository supports:
 - `/v1/embeddings` for OpenAI-style embeddings requests
 - `/v1/models` for OpenAI-compatible model discovery
 - live `Ollama` model inventory folded into `/v1/models` when available
+- local OpenAI-compatible model inventory folded into `/v1/models` when available
 - OpenAI-style tool-call passthrough through `/v1/chat/completions`
+- MCP/tool metadata risk detection for suspicious tool descriptions
 - OpenAI-style SSE streaming through `/v1/chat/completions`
 - a compatibility layer from `/v1/responses` onto the same routing and verification path
 - common OpenAI request-field passthrough and structured-output mapping
 - `/v1/stats` for simple routing telemetry
 - `/v1/logs` for recent request-level route logs
-- `Ollama` as the first real execution backend
+- `Ollama` as a local execution backend
+- `llamacpp` as a local OpenAI-compatible execution backend for `llama.cpp`
+  server, LM Studio, vLLM, and similar `/v1` runtimes
 - generic OpenAI-compatible cloud execution
+- OpenAI-compatible proxy execution for LiteLLM-style gateways, including
+  no-key local proxy mode
 - Anthropic Messages-compatible cloud execution
 - heuristic verification and escalation traces
 - simple estimated cost accounting
@@ -71,7 +77,8 @@ The current execution behavior is intentionally conservative but now genuinely h
 
 - `/healthz` reports whether the system is healthy, degraded, or unusable based on live provider readiness
 - `/v1/route` is a planning endpoint that now includes provider availability and fallback availability metadata
-- local routes execute through `Ollama`
+- local routes execute through `Ollama` by default, or through a configured
+  OpenAI-compatible local runtime
 - cloud routes execute through a generic OpenAI-compatible adapter when an API key is configured
 - local provider failures can fall back to the cloud when policy allows it
 - embeddings requests use the same local-first policy with cloud fallback when privacy allows it
@@ -82,13 +89,24 @@ The current execution behavior is intentionally conservative but now genuinely h
 - common request controls like `response_format`, `temperature`, `top_p`, `max_tokens`, `stop`, `seed`, and penalties are passed through when supported by the selected backend
 - if verification requests escalation but no cloud provider is configured, the local response is returned with a trace explaining why escalation did not happen
 - the routing decision is included in the chat response for transparency
+- decision traces include a compact human-readable summary for scan-friendly logs and responses
 - provider attempts are captured in the trace so users can see failures, retries, and fallback outcomes
 - in-memory telemetry tracks local/cloud outcomes and escalation counts
 - telemetry also reports simple estimated savings against an all-cloud baseline
 - telemetry now tracks request-kind counts, latency, and chat token-speed averages
+- optional cloud budget enforcement blocks fallback or escalation when the next
+  cloud request would exceed configured spend
+- per-request `allow_fallbacks=false` disables cloud fallback and verification
+  escalation without marking the request private
+- per-request `max_cloud_cost_usd` blocks cloud fallback or escalation when the
+  configured cloud request cost exceeds the request cap
+- optional OpenTelemetry-compatible spans export route, provider, privacy,
+  verification, tool-risk, and decision-summary attributes
 - heuristic privacy detection can force local execution for obvious sensitive or code-like content
 - recent route logs expose per-request trace data for debugging and trust
 - CLI doctor and model-inventory commands surface readiness and model visibility before requests are sent
+- CLI local model recommendations inspect CPU, RAM, and basic GPU signals to
+  suggest an Ollama model and pull commands for the current machine
 
 ## Near-term implementation shape
 

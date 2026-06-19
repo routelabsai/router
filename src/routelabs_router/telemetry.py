@@ -56,6 +56,9 @@ class InMemoryTelemetry:
             else:
                 self._stats.cloud_responses += 1
                 request_cost = self._costs.cloud_request_cost_usd
+                self._stats.estimated_cloud_cost_usd = _round_cost(
+                    self._stats.estimated_cloud_cost_usd + request_cost
+                )
                 self._stats.estimated_total_cost_usd = _round_cost(
                     self._stats.estimated_total_cost_usd + request_cost
                 )
@@ -127,6 +130,7 @@ class InMemoryTelemetry:
                 private_requests=stats.private_requests,
                 auto_private_requests=stats.auto_private_requests,
                 estimated_total_cost_usd=stats.estimated_total_cost_usd,
+                estimated_cloud_cost_usd=stats.estimated_cloud_cost_usd,
                 estimated_baseline_cloud_cost_usd=stats.estimated_baseline_cloud_cost_usd,
                 estimated_cost_saved_usd=stats.estimated_cost_saved_usd,
                 estimated_cloud_requests_avoided=stats.estimated_cloud_requests_avoided,

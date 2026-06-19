@@ -13,6 +13,7 @@ class RouterEngine:
         agent_tools = analyze_agent_tools(
             task=request.task,
             tool_names=request.tool_names,
+            tool_descriptions=request.tool_descriptions,
             tool_count=request.tool_count,
             tool_choice=request.tool_choice,
             approval_required_patterns=(
@@ -110,6 +111,7 @@ def classify_complexity(task: str) -> str:
 def analyze_agent_tools(
     task: str,
     tool_names: list[str] | None = None,
+    tool_descriptions: dict[str, str] | None = None,
     tool_count: int | None = None,
     tool_choice: str | dict[str, object] | None = None,
     approval_required_patterns: list[str] | None = None,
@@ -127,6 +129,8 @@ def analyze_agent_tools(
     untrusted_names = [name for name in names if name not in trusted_names]
     all_lowered_names = [name.lower() for name in names]
     lowered_names = [name.lower() for name in untrusted_names]
+    descriptions = _clean_tool_descriptions(tool_descriptions or {})
+    metadata_findings = _metadata_risk_findings(descriptions)
     reasons: list[str] = []
 
     mcp_like = (
@@ -144,6 +148,14 @@ def analyze_agent_tools(
         reasons.append(
             "trusted tool policy matched: " + ", ".join(trusted_names[:5])
         )
+    if metadata_findings:
+        reasons.append(
+            "suspicious tool metadata detected: "
+            + ", ".join(
+                f"{name} matched '{signal}'"
+                for name, signal in metadata_findings[:3]
+            )
+        )
 
     if _tool_choice_forces_tool(tool_choice):
         reasons.append("tool_choice requires tool use")
@@ -158,6 +170,9 @@ def analyze_agent_tools(
         values=[*lowered_names, lowered_task],
         patterns=approval_required_patterns,
     )
+    metadata_signal = metadata_findings[0][1] if metadata_findings else None
+    if metadata_signal is not None:
+        high_signal = f"tool_metadata:{metadata_signal}"
     review_signal = None
     if high_signal is None:
         review_signal = _first_policy_signal(
@@ -178,6 +193,7 @@ def analyze_agent_tools(
         names
         or inferred_count
         or mcp_like
+        or metadata_findings
         or _tool_choice_forces_tool(tool_choice)
     )
     if detected and risk_level == "none":
@@ -188,7 +204,9 @@ def analyze_agent_tools(
         tool_count=max(inferred_count, len(names)),
         tool_names=names,
         trusted_tool_names=trusted_names,
+        suspicious_tool_names=[name for name, _ in metadata_findings],
         mcp_like=mcp_like,
+        metadata_risk_detected=bool(metadata_findings),
         approval_required=approval_required,
         approval_reason=approval_reason,
         risk_level=risk_level,
@@ -233,6 +251,27 @@ DEFAULT_REVIEW_RECOMMENDED_PATTERNS = [
     "ticket",
 ]
 
+TOOL_METADATA_RISK_PATTERNS = [
+    "ignore previous",
+    "ignore all previous",
+    "ignore the user",
+    "ignore system",
+    "developer message",
+    "system prompt",
+    "hidden instruction",
+    "do not disclose",
+    "do not reveal",
+    "secretly",
+    "exfiltrate",
+    "leak",
+    "credential",
+    "api key",
+    "private key",
+    "bypass",
+    "disable safety",
+    "jailbreak",
+]
+
 
 def _agent_tool_route_reason(agent_tools: AgentToolTrace) -> str:
     if agent_tools.approval_required:
@@ -252,6 +291,29 @@ def _dedupe_tool_names(tool_names: list[str]) -> list[str]:
         seen.add(cleaned)
         deduped.append(cleaned)
     return deduped
+
+
+def _clean_tool_descriptions(tool_descriptions: dict[str, str]) -> dict[str, str]:
+    cleaned: dict[str, str] = {}
+    for name, description in tool_descriptions.items():
+        clean_name = str(name).strip()
+        clean_description = str(description).strip()
+        if clean_name and clean_description:
+            cleaned[clean_name] = clean_description
+    return cleaned
+
+
+def _metadata_risk_findings(
+    tool_descriptions: dict[str, str],
+) -> list[tuple[str, str]]:
+    findings: list[tuple[str, str]] = []
+    for name, description in tool_descriptions.items():
+        lowered = description.lower()
+        for pattern in TOOL_METADATA_RISK_PATTERNS:
+            if pattern in lowered:
+                findings.append((name, pattern))
+                break
+    return findings
 
 
 def _looks_mcp_like(name: str) -> bool:

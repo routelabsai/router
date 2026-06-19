@@ -42,13 +42,22 @@ Framed more directly:
 Current status:
 - route inspection endpoint implemented
 - `Ollama` local chat execution implemented
+- local OpenAI-compatible execution implemented for `llama.cpp`-style servers,
+  LM Studio, vLLM, and similar `/v1` runtimes
 - OpenAI-style `/v1/chat/completions` endpoint implemented
 - generic OpenAI-compatible cloud execution implemented
+- LiteLLM proxy profile implemented through the OpenAI-compatible provider path
+- suspicious MCP/tool metadata risk detection implemented for declared tool descriptions
 - first verification-aware escalation loop implemented
 - initial stats endpoint implemented for local/cloud/escalation visibility
 - simple estimated cost savings implemented
+- cloud budget guardrail implemented for fallback and verification escalation
+- per-request fallback disablement implemented with `allow_fallbacks`
+- per-request cloud cost cap implemented with `max_cloud_cost_usd`
+- local machine model recommendation implemented for Ollama setup
 - heuristic privacy-aware local preference implemented
 - recent request-level logs implemented
+- optional OpenTelemetry-compatible route spans implemented
 
 ## Phase 2: Verification and evaluation
 

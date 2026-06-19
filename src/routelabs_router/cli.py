@@ -5,6 +5,7 @@ import uvicorn
 import yaml
 
 from routelabs_router.config import DEFAULT_CONFIG, load_config
+from routelabs_router.hardware import detect_machine_profile, recommend_local_model
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
 from routelabs_router.server.app import create_app
@@ -39,6 +40,24 @@ def main() -> None:
         "quickstart", help="Show the fastest setup path for local, OpenAI, and Anthropic use"
     )
     quickstart_parser.add_argument("--config", default="./config/router.yaml")
+
+    recommend_parser = subparsers.add_parser(
+        "recommend", help="Recommend local models for this machine"
+    )
+    recommend_subparsers = recommend_parser.add_subparsers(
+        dest="recommendation",
+        required=True,
+    )
+    local_model_parser = recommend_subparsers.add_parser(
+        "local-model",
+        help="Recommend an Ollama model based on local CPU/GPU/RAM",
+    )
+    local_model_parser.add_argument(
+        "--workload",
+        default="general",
+        choices=("general", "coding", "agent"),
+        help="Optimize the recommendation for a workload",
+    )
 
     demo_parser = subparsers.add_parser(
         "demo", help="Show focused demos for RouteLabs routing behavior"
@@ -79,6 +98,7 @@ def main() -> None:
             "openclaw",
             "hermes-agent",
             "unsloth-local",
+            "litellm-proxy",
         ),
     )
     init_parser.add_argument(
@@ -127,6 +147,8 @@ def main() -> None:
     elif args.command == "quickstart":
         config = load_config(Path(args.config))
         _print_quickstart(ChatService(config), config)
+    elif args.command == "recommend" and args.recommendation == "local-model":
+        _print_local_model_recommendation(workload=args.workload)
     elif args.command == "demo" and args.demo == "agent-tools":
         config = load_config(Path(args.config))
         scenario = _agent_tools_demo_scenario(args.preset)
@@ -175,10 +197,15 @@ def _print_startup_status(config) -> None:
         )
 
     if not local.available:
-        print(
-            f"Warning: local provider '{local_name}' is not ready. "
-            "Start Ollama with `ollama serve` if you want local execution."
-        )
+        if local_name == "ollama":
+            print(
+                f"Warning: local provider '{local_name}' is not ready. "
+                "Start Ollama with `ollama serve` if you want local execution."
+            )
+        else:
+            print(f"Warning: local provider '{local_name}' is not ready.")
+            for action in _local_runtime_actions(config):
+                print(f"Action: {action}")
     if not cloud.available:
         env_name = _cloud_api_env_name(config)
         print(
@@ -204,10 +231,10 @@ def _print_doctor_report(service: ChatService, config) -> None:
 
     print(f"Local provider ({local_name}): {local.status}")
     print(f"Cloud provider ({cloud_name}): {cloud.status}")
-    print(f"Configured local chat model: {config.providers.local.ollama.model}")
+    print(f"Configured local chat model: {_local_chat_model(config)}")
     print(
         "Configured local embedding model: "
-        f"{config.providers.local.ollama.embedding_model or config.providers.local.ollama.model}"
+        f"{_local_embedding_model(config)}"
     )
     print(
         "Configured cloud chat model: "
@@ -240,7 +267,8 @@ def _print_doctor_report(service: ChatService, config) -> None:
         for model in missing:
             print(f"- {model}")
     if not local.available:
-        print("Action: run `ollama serve` to enable local execution.")
+        for action in _local_runtime_actions(config):
+            print(f"Action: {action}")
     if not cloud.available:
         env_name = _cloud_api_env_name(config)
         print(f"Action: set `{env_name}` to enable cloud fallback and escalation.")
@@ -266,7 +294,8 @@ def _print_quickstart(service: ChatService, config) -> None:
 
     print("1. Local-only setup")
     print("   Run:")
-    print("   ollama serve")
+    for step in _local_runtime_setup_steps(config):
+        print(f"   {step}")
     for model_name in missing_local_models:
         print(f"   ollama pull {model_name}")
     print("   router start")
@@ -294,6 +323,45 @@ def _print_quickstart(service: ChatService, config) -> None:
     print("   curl -X POST http://127.0.0.1:8000/v1/chat/completions \\")
     print('     -H "Content-Type: application/json" \\')
     print('     -d \'{"model":"route-auto","messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}]}\'')
+
+
+def _print_local_model_recommendation(workload: str) -> None:
+    profile = detect_machine_profile()
+    recommendation = recommend_local_model(profile, workload=workload)
+
+    print("RouteLabs Local Model Recommendation")
+    print(f"Workload: {workload}")
+    print("")
+    print("Detected machine:")
+    print(f"- OS: {profile.os_name}")
+    print(f"- Architecture: {profile.arch}")
+    print(f"- CPU cores: {profile.cpu_count}")
+    print(f"- RAM: {_format_optional_gb(profile.memory_gb)}")
+    print(f"- Accelerator: {profile.accelerator}")
+    if profile.gpu_name:
+        print(f"- GPU: {profile.gpu_name}")
+    if profile.gpu_memory_gb is not None:
+        print(f"- GPU memory: {_format_optional_gb(profile.gpu_memory_gb)}")
+    print("")
+    print("Recommended local model:")
+    print(f"- Model: {recommendation.model}")
+    print(f"- Embeddings: {recommendation.embedding_model}")
+    print(f"- Profile: {recommendation.profile}")
+    print(f"- Reason: {recommendation.reason}")
+    print("")
+    print("Run:")
+    for command in recommendation.pull_commands:
+        print(f"  {command}")
+    print("")
+    print("Config hint:")
+    for key, value in recommendation.config_hint.items():
+        print(f"  {key}: {value}")
+
+
+def _format_optional_gb(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{value:.1f} GB"
 
 
 def _agent_tools_demo_scenario(preset: str) -> dict[str, str]:
@@ -398,7 +466,17 @@ def _write_init_config(
     embedding_model = merged["providers"]["local"]["ollama"].get("embedding_model")
     if embedding_model:
         print(f"   ollama pull {embedding_model}")
-    print(f"3. Set `{_cloud_api_env_name_from_provider_name(cloud, merged)}` if you want cloud fallback.")
+    cloud_config = _cloud_provider_config_from_name(cloud, merged)
+    if cloud_config.get("requires_api_key", True):
+        print(
+            f"3. Set `{_cloud_api_env_name_from_provider_name(cloud, merged)}` "
+            "if you want cloud fallback."
+        )
+    else:
+        print(
+            "3. Start your OpenAI-compatible proxy if you want cloud fallback "
+            f"({cloud_config.get('base_url', 'configured base_url')})."
+        )
     print(f"4. Run `router quickstart --config {output_path}`.")
     print(f"5. Run `router start --config {output_path}`.")
 
@@ -420,6 +498,8 @@ def _print_models(service: ChatService) -> None:
 
 
 def _missing_configured_ollama_models(service: ChatService, config) -> list[str]:
+    if config.providers.local.default != "ollama":
+        return []
     configured_local_models = {
         config.providers.local.ollama.model,
         config.providers.local.ollama.embedding_model
@@ -430,7 +510,51 @@ def _missing_configured_ollama_models(service: ChatService, config) -> list[str]
         for model in service.list_models().data
         if model.provider == "ollama" and model.status == "installed"
     }
-    return sorted(model for model in configured_local_models if model not in installed_ids)
+    return sorted(
+        model for model in configured_local_models if model not in installed_ids
+    )
+
+
+def _local_chat_model(config) -> str:
+    local_name = config.providers.local.default
+    if local_name == "llamacpp":
+        return config.providers.local.llamacpp.model
+    return config.providers.local.ollama.model
+
+
+def _local_embedding_model(config) -> str:
+    local_name = config.providers.local.default
+    if local_name == "llamacpp":
+        return (
+            config.providers.local.llamacpp.embedding_model
+            or config.providers.local.llamacpp.model
+        )
+    return (
+        config.providers.local.ollama.embedding_model
+        or config.providers.local.ollama.model
+    )
+
+
+def _local_runtime_actions(config) -> list[str]:
+    local_name = config.providers.local.default
+    if local_name == "llamacpp":
+        base_url = config.providers.local.llamacpp.base_url
+        return [
+            "start your OpenAI-compatible local server "
+            f"(llama.cpp, LM Studio, or vLLM) at `{base_url}`"
+        ]
+    return ["run `ollama serve` to enable local execution"]
+
+
+def _local_runtime_setup_steps(config) -> list[str]:
+    local_name = config.providers.local.default
+    if local_name == "llamacpp":
+        base_url = config.providers.local.llamacpp.base_url
+        return [
+            "start your OpenAI-compatible local server "
+            f"(llama.cpp, LM Studio, or vLLM) at {base_url}"
+        ]
+    return ["ollama serve"]
 
 
 def _cloud_api_env_name(config) -> str:
@@ -441,21 +565,16 @@ def _cloud_api_env_name(config) -> str:
 
 
 def _cloud_api_env_name_from_provider_name(cloud_name: str, config_dict: dict) -> str:
+    provider = _cloud_provider_config_from_name(cloud_name, config_dict)
     if cloud_name == "anthropic":
-        return (
-            config_dict.get("providers", {})
-            .get("cloud", {})
-            .get("anthropic", {})
-            .get("api_key_env")
-            or "ANTHROPIC_API_KEY"
-        )
-    return (
-        config_dict.get("providers", {})
-        .get("cloud", {})
-        .get("openai_compatible", {})
-        .get("api_key_env")
-        or "OPENAI_API_KEY"
-    )
+        return provider.get("api_key_env") or "ANTHROPIC_API_KEY"
+    return provider.get("api_key_env") or "OPENAI_API_KEY"
+
+
+def _cloud_provider_config_from_name(cloud_name: str, config_dict: dict) -> dict:
+    key = "anthropic" if cloud_name == "anthropic" else "openai_compatible"
+    provider = config_dict.get("providers", {}).get("cloud", {}).get(key, {})
+    return provider if isinstance(provider, dict) else {}
 
 
 def _deep_merge_dicts(base: dict, override: dict) -> dict:

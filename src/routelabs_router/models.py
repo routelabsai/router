@@ -6,7 +6,10 @@ from pydantic import BaseModel, Field
 class RouteRequest(BaseModel):
     task: str = Field(..., min_length=1)
     private: bool = False
+    allow_fallbacks: bool = True
+    max_cloud_cost_usd: float | None = Field(default=None, ge=0)
     tool_names: list[str] = Field(default_factory=list)
+    tool_descriptions: dict[str, str] = Field(default_factory=dict)
     tool_count: int | None = None
     tool_choice: str | dict[str, Any] | None = None
 
@@ -16,7 +19,9 @@ class AgentToolTrace(BaseModel):
     tool_count: int = 0
     tool_names: list[str] = Field(default_factory=list)
     trusted_tool_names: list[str] = Field(default_factory=list)
+    suspicious_tool_names: list[str] = Field(default_factory=list)
     mcp_like: bool = False
+    metadata_risk_detected: bool = False
     approval_required: bool = False
     approval_reason: str | None = None
     risk_level: str = "none"
@@ -50,6 +55,8 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1)
     model: str | None = None
     private: bool = False
+    allow_fallbacks: bool = True
+    max_cloud_cost_usd: float | None = Field(default=None, ge=0)
     stream: bool = False
     response_format: dict[str, Any] | None = None
     tools: list[dict[str, Any]] | None = None
@@ -72,6 +79,8 @@ class ResponsesRequest(BaseModel):
     model: str | None = None
     instructions: str | None = None
     private: bool = False
+    allow_fallbacks: bool = True
+    max_cloud_cost_usd: float | None = Field(default=None, ge=0)
     stream: bool = False
     text: ResponsesTextConfig | None = None
     tools: list[dict[str, Any]] | None = None
@@ -89,6 +98,8 @@ class EmbeddingsRequest(BaseModel):
     input: str | list[str]
     model: str | None = None
     private: bool = False
+    allow_fallbacks: bool = True
+    max_cloud_cost_usd: float | None = Field(default=None, ge=0)
 
 
 class EmbeddingObject(BaseModel):
@@ -183,6 +194,8 @@ class AnthropicMessagesRequest(BaseModel):
     system: str | list[dict[str, Any]] | None = None
     max_tokens: int = 1024
     private: bool = False
+    allow_fallbacks: bool = True
+    max_cloud_cost_usd: float | None = Field(default=None, ge=0)
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
     tool_choice: AnthropicToolChoice | dict[str, Any] | None = None
@@ -250,6 +263,18 @@ class ProviderAttempt(BaseModel):
     duration_ms: float | None = None
 
 
+class DecisionSummary(BaseModel):
+    headline: str
+    target: str
+    provider: str
+    model: str
+    reason: str
+    privacy: str = "not_detected"
+    verification: str = "not_run"
+    agent_tool_risk: str = "none"
+    attempts: int = 0
+
+
 class DecisionTrace(BaseModel):
     privacy: "PrivacyDetectionResult | None" = None
     agent_tools: AgentToolTrace | None = None
@@ -261,6 +286,7 @@ class DecisionTrace(BaseModel):
     final_route: RouteDecision
     total_latency_ms: float | None = None
     completion_tokens_per_second: float | None = None
+    summary: DecisionSummary | None = None
 
 
 class RouterStats(BaseModel):
@@ -275,6 +301,7 @@ class RouterStats(BaseModel):
     private_requests: int = 0
     auto_private_requests: int = 0
     estimated_total_cost_usd: float = 0.0
+    estimated_cloud_cost_usd: float = 0.0
     estimated_baseline_cloud_cost_usd: float = 0.0
     estimated_cost_saved_usd: float = 0.0
     estimated_cloud_requests_avoided: int = 0
@@ -308,6 +335,7 @@ class RouterStatsResponse(BaseModel):
     private_requests: int
     auto_private_requests: int
     estimated_total_cost_usd: float
+    estimated_cloud_cost_usd: float
     estimated_baseline_cloud_cost_usd: float
     estimated_cost_saved_usd: float
     estimated_cloud_requests_avoided: int
