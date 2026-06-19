@@ -25,6 +25,36 @@ def main() -> None:
         choices=("true", "false"),
         help="Whether the task contains private data",
     )
+    route_parser.add_argument(
+        "--allow-fallbacks",
+        default="true",
+        choices=("true", "false"),
+        help="Whether cloud fallback and verification escalation are allowed",
+    )
+    route_parser.add_argument(
+        "--max-cloud-cost-usd",
+        type=float,
+        default=None,
+        help="Block cloud fallback if the configured request cost is above this cap",
+    )
+    route_parser.add_argument(
+        "--tool-name",
+        action="append",
+        default=[],
+        help="Declare a tool name for agent/MCP-style risk inspection",
+    )
+    route_parser.add_argument(
+        "--tool-description",
+        action="append",
+        default=[],
+        metavar="NAME=DESCRIPTION",
+        help="Declare tool metadata for prompt-injection risk inspection",
+    )
+    route_parser.add_argument(
+        "--tool-choice",
+        default=None,
+        help="Declare a requested tool choice such as auto, required, or a tool name",
+    )
 
     doctor_parser = subparsers.add_parser(
         "doctor", help="Inspect runtime readiness and setup gaps"
@@ -130,16 +160,24 @@ def main() -> None:
 
     if args.command == "route":
         config = load_config(Path(args.config))
-        engine = RouterEngine(config)
-        decision = engine.decide(
-            RouteRequest(task=args.task, private=args.private == "true")
+        try:
+            tool_descriptions = _parse_tool_descriptions(args.tool_description)
+        except ValueError as exc:
+            parser.error(str(exc))
+        service = ChatService(config)
+        decision = service.inspect_route(
+            RouteRequest(
+                task=args.task,
+                private=args.private == "true",
+                allow_fallbacks=args.allow_fallbacks == "true",
+                max_cloud_cost_usd=args.max_cloud_cost_usd,
+                tool_names=args.tool_name,
+                tool_descriptions=tool_descriptions,
+                tool_count=len(args.tool_name) if args.tool_name else None,
+                tool_choice=args.tool_choice,
+            )
         )
-        print(f"route: {decision.target}")
-        print(f"provider: {decision.provider}")
-        print(f"model: {decision.model}")
-        print(f"reason: {decision.reason}")
-        print(f"complexity: {decision.complexity}")
-        print(f"verify: {decision.verify}")
+        _print_route_decision(decision)
     elif args.command == "doctor":
         config = load_config(Path(args.config))
         _print_doctor_report(ChatService(config), config)
@@ -234,10 +272,7 @@ def _print_doctor_report(service: ChatService, config) -> None:
     print(f"Local provider ({local_name}): {local.status}")
     print(f"Cloud provider ({cloud_name}): {cloud.status}")
     print(f"Configured local chat model: {_local_chat_model(config)}")
-    print(
-        "Configured local embedding model: "
-        f"{_local_embedding_model(config)}"
-    )
+    print("Configured local embedding model: " f"{_local_embedding_model(config)}")
     print(
         "Configured cloud chat model: "
         f"{config.providers.cloud.openai_compatible.model}"
@@ -248,7 +283,9 @@ def _print_doctor_report(service: ChatService, config) -> None:
     )
 
     installed_ollama_models = [
-        model for model in service.list_models().data if model.provider == "ollama" and model.source == "installed"
+        model
+        for model in service.list_models().data
+        if model.provider == "ollama" and model.source == "installed"
     ]
     if installed_ollama_models:
         print("Installed Ollama models:")
@@ -263,7 +300,9 @@ def _print_doctor_report(service: ChatService, config) -> None:
         or config.providers.local.ollama.model,
     }
     installed_ids = {model.id for model in installed_ollama_models}
-    missing = sorted(model for model in configured_local_models if model not in installed_ids)
+    missing = sorted(
+        model for model in configured_local_models if model not in installed_ids
+    )
     if missing:
         print("Missing configured Ollama models:")
         for model in missing:
@@ -274,6 +313,49 @@ def _print_doctor_report(service: ChatService, config) -> None:
     if not cloud.available:
         env_name = _cloud_api_env_name(config)
         print(f"Action: set `{env_name}` to enable cloud fallback and escalation.")
+
+
+def _print_route_decision(decision) -> None:
+    print(f"route: {decision.target}")
+    print(f"provider: {decision.provider}")
+    print(f"model: {decision.model}")
+    print(f"reason: {decision.reason}")
+    print(f"complexity: {decision.complexity}")
+    print(f"verify: {decision.verify}")
+    if decision.provider_available is not None:
+        print(f"provider_available: {decision.provider_available}")
+    if decision.provider_status is not None:
+        print(f"provider_status: {decision.provider_status}")
+    if decision.fallback_available is not None:
+        print(f"fallback_available: {decision.fallback_available}")
+    if decision.fallback_status is not None:
+        print(f"fallback_status: {decision.fallback_status}")
+
+    agent_tools = decision.agent_tools
+    if agent_tools is None or not agent_tools.detected:
+        return
+
+    print("")
+    print("agent_tools:")
+    print(f"- detected: {agent_tools.detected}")
+    print(f"- mcp_like: {agent_tools.mcp_like}")
+    print(f"- risk_level: {agent_tools.risk_level}")
+    print(f"- approval_required: {agent_tools.approval_required}")
+    if agent_tools.tool_names:
+        print(f"- tool_names: {', '.join(agent_tools.tool_names)}")
+    if agent_tools.trusted_tool_names:
+        print(f"- trusted_tool_names: {', '.join(agent_tools.trusted_tool_names)}")
+    if agent_tools.suspicious_tool_names:
+        print(
+            "- suspicious_tool_names: "
+            + ", ".join(agent_tools.suspicious_tool_names)
+        )
+    if agent_tools.approval_reason:
+        print(f"- approval_reason: {agent_tools.approval_reason}")
+    if agent_tools.reasons:
+        print("- reasons:")
+        for reason in agent_tools.reasons:
+            print(f"  - {reason}")
 
 
 def _print_quickstart(service: ChatService, config) -> None:
@@ -573,6 +655,24 @@ def _cloud_provider_config_from_name(cloud_name: str, config_dict: dict) -> dict
     key = "anthropic" if cloud_name == "anthropic" else "openai_compatible"
     provider = config_dict.get("providers", {}).get("cloud", {}).get(key, {})
     return provider if isinstance(provider, dict) else {}
+
+
+def _parse_tool_descriptions(values: list[str]) -> dict[str, str]:
+    descriptions: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(
+                "--tool-description must use NAME=DESCRIPTION format"
+            )
+        name, description = value.split("=", 1)
+        name = name.strip()
+        description = description.strip()
+        if not name or not description:
+            raise ValueError(
+                "--tool-description must include both NAME and DESCRIPTION"
+            )
+        descriptions[name] = description
+    return descriptions
 
 
 def _init_local_runtime_steps(config_dict: dict) -> list[str]:
