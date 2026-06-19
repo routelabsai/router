@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0
+
+This release expands RouteLabs Router from an Ollama-first gateway into a more
+practical local-first control plane for OpenAI-compatible local runtimes,
+agent-tool routing, cost guardrails, and trace visibility.
+
+Highlights:
+
+- local OpenAI-compatible runtime support for `llama.cpp`, LM Studio, vLLM, and similar `/v1` servers
+- `llamacpp-local`, `lmstudio-local`, and `litellm-proxy` starter config profiles
+- `router recommend local-model` for machine-aware Ollama model recommendations
+- richer `router route` output with provider readiness, fallback status, MCP-style tool-risk traces, and suspicious tool metadata detection
+- suspicious tool-description metadata detection for prompt-injection-like language, credential exfiltration language, and safety bypass language
+- per-request `allow_fallbacks` and `max_cloud_cost_usd` controls across OpenAI-compatible, Responses, Anthropic-compatible, and embeddings requests
+- configurable cloud budget guardrail for fallback and verification escalation
+- compact decision summaries in traces and recent logs
+- optional OpenTelemetry route spans through the `observability` extra
+- improved model discovery/readiness for OpenAI-compatible local runtimes and no-key local proxy modes
+
+Suggested upgrade test:
+
+```bash
+pip install --upgrade routelabs-router
+router recommend local-model
+router doctor
+router route --task "Search tickets" --tool-name mcp__tickets__search
+```
+
 ## 0.3.0
 
 This release makes RouteLabs much easier to adopt across the current agent ecosystem by adding both newer OpenAI-style surfaces and an Anthropic-compatible surface.
