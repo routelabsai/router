@@ -98,6 +98,8 @@ def main() -> None:
             "openclaw",
             "hermes-agent",
             "unsloth-local",
+            "llamacpp-local",
+            "lmstudio-local",
             "litellm-proxy",
         ),
     )
@@ -460,12 +462,8 @@ def _write_init_config(
     print(f"Default cloud provider: {cloud}")
     print("")
     print("Next steps:")
-    print("1. Start your local runtime with `ollama serve`.")
-    print("2. Pull local models if needed:")
-    print(f"   ollama pull {merged['providers']['local']['ollama']['model']}")
-    embedding_model = merged["providers"]["local"]["ollama"].get("embedding_model")
-    if embedding_model:
-        print(f"   ollama pull {embedding_model}")
+    for step in _init_local_runtime_steps(merged):
+        print(step)
     cloud_config = _cloud_provider_config_from_name(cloud, merged)
     if cloud_config.get("requires_api_key", True):
         print(
@@ -575,6 +573,36 @@ def _cloud_provider_config_from_name(cloud_name: str, config_dict: dict) -> dict
     key = "anthropic" if cloud_name == "anthropic" else "openai_compatible"
     provider = config_dict.get("providers", {}).get("cloud", {}).get(key, {})
     return provider if isinstance(provider, dict) else {}
+
+
+def _init_local_runtime_steps(config_dict: dict) -> list[str]:
+    local = config_dict.get("providers", {}).get("local", {})
+    if not isinstance(local, dict):
+        return ["1. Start your local runtime.", "2. Confirm your local model is ready."]
+
+    local_name = local.get("default", "ollama")
+    if local_name == "llamacpp":
+        provider = local.get("llamacpp", {})
+        provider = provider if isinstance(provider, dict) else {}
+        base_url = provider.get("base_url", "http://127.0.0.1:8080/v1")
+        model = provider.get("model", "configured local model")
+        return [
+            "1. Start your OpenAI-compatible local server "
+            f"(llama.cpp, LM Studio, or vLLM) at `{base_url}`.",
+            f"2. Confirm it exposes model `{model}` from `/v1/models`.",
+        ]
+
+    provider = local.get("ollama", {})
+    provider = provider if isinstance(provider, dict) else {}
+    steps = ["1. Start your local runtime with `ollama serve`."]
+    steps.append("2. Pull local models if needed:")
+    model = provider.get("model")
+    if model:
+        steps.append(f"   ollama pull {model}")
+    embedding_model = provider.get("embedding_model")
+    if embedding_model:
+        steps.append(f"   ollama pull {embedding_model}")
+    return steps
 
 
 def _deep_merge_dicts(base: dict, override: dict) -> dict:

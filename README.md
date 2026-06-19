@@ -506,6 +506,8 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 
 - `balanced.yaml`
 - `local-first.yaml`
+- `llamacpp-local.yaml`
+- `lmstudio-local.yaml`
 - `openclaw.yaml`
 - `hermes-agent.yaml`
 - `litellm-proxy.yaml`
@@ -525,6 +527,22 @@ router init --profile balanced --cloud anthropic
 ```
 
 By default this writes to [`config/router.yaml`](config/router.yaml). Use `--output` to write somewhere else or `--force` to overwrite an existing file.
+
+To use a local OpenAI-compatible runtime instead of Ollama:
+
+```bash
+router init --profile llamacpp-local --output ./config/router.yaml --force
+# Start llama.cpp server at http://127.0.0.1:8080/v1
+router start
+```
+
+For LM Studio:
+
+```bash
+router init --profile lmstudio-local --output ./config/router.yaml --force
+# Start LM Studio's local server at http://127.0.0.1:1234/v1
+router start
+```
 
 To put RouteLabs in front of a local LiteLLM proxy:
 

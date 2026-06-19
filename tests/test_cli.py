@@ -586,6 +586,65 @@ def test_init_command_creates_litellm_proxy_profile(
     assert "Profile: litellm-proxy" in output
 
 
+def test_init_command_creates_lmstudio_local_profile(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "lmstudio-router.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "lmstudio-local",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    local = data["providers"]["local"]
+    provider = local["llamacpp"]
+    assert local["default"] == "llamacpp"
+    assert provider["base_url"] == "http://127.0.0.1:1234/v1"
+    assert provider["requires_api_key"] is False
+    assert "OpenAI-compatible local server" in output
+    assert "http://127.0.0.1:1234/v1" in output
+    assert "ollama pull" not in output
+    assert "Profile: lmstudio-local" in output
+
+
+def test_init_command_creates_llamacpp_local_profile(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "llamacpp-router.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "llamacpp-local",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    provider = data["providers"]["local"]["llamacpp"]
+    assert data["providers"]["local"]["default"] == "llamacpp"
+    assert provider["base_url"] == "http://127.0.0.1:8080/v1"
+    assert provider["model"] == "qwen3-4b-instruct"
+    assert "Confirm it exposes model `qwen3-4b-instruct`" in output
+    assert "Profile: llamacpp-local" in output
+
+
 def test_init_command_refuses_to_overwrite_without_force(
     monkeypatch, tmp_path, capsys
 ) -> None:
