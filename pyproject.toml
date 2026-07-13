@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "routelabs-router"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local-first OpenAI-compatible and Anthropic-compatible runtime for hybrid LLM routing, verification-aware escalation, and privacy-aware local execution."
 readme = "README.md"
 requires-python = ">=3.11"
