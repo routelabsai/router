@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
-from routelabs_router.config import load_config
+from routelabs_router.config import DEFAULT_CONFIG, load_config
 from routelabs_router.models import (
     AnthropicMessagesRequest,
     AnthropicMessagesResponse,
@@ -30,7 +30,12 @@ def create_app(
     config_path: Path | None = None, service: ChatService | None = None
 ) -> FastAPI:
     resolved_path = config_path or Path("./config/router.yaml")
-    config = load_config(resolved_path)
+    if service is not None:
+        config = service.config
+    elif config_path is None and not resolved_path.exists():
+        config = DEFAULT_CONFIG
+    else:
+        config = load_config(resolved_path)
     engine = RouterEngine(config)
     chat_service = service or ChatService(config, router=engine)
     app = FastAPI(title="RouteLabs Router", version="0.3.0")

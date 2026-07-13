@@ -68,6 +68,7 @@ def test_route_command_prints_readiness_and_agent_tool_trace(
                 reason="agent tool request starts local with approval-risk trace",
                 complexity="medium",
                 verify=True,
+                agent_role=request.agent_role,
                 provider_available=True,
                 provider_status="ready",
                 fallback_available=False,
@@ -99,6 +100,8 @@ def test_route_command_prints_readiness_and_agent_tool_trace(
             "./config/router.yaml",
             "--task",
             "Search customer tickets",
+            "--agent-role",
+            "planner",
             "--allow-fallbacks",
             "false",
             "--max-cloud-cost-usd",
@@ -117,6 +120,7 @@ def test_route_command_prints_readiness_and_agent_tool_trace(
     request = captured["request"]
     output = capsys.readouterr().out
     assert request.allow_fallbacks is False
+    assert request.agent_role == "planner"
     assert request.max_cloud_cost_usd == 0.01
     assert request.tool_names == ["mcp__tickets__search"]
     assert request.tool_descriptions == {
@@ -124,6 +128,7 @@ def test_route_command_prints_readiness_and_agent_tool_trace(
     }
     assert request.tool_choice == "required"
     assert "provider_available: True" in output
+    assert "agent_role: planner" in output
     assert "fallback_status: disabled_by_request" in output
     assert "agent_tools:" in output
     assert "- risk_level: high" in output
@@ -300,6 +305,7 @@ def test_start_command_warns_when_configured_ollama_model_is_missing(
 
     output = capsys.readouterr().out
     assert "configured Ollama model 'qwen3:4b' is not installed yet" in output
+    assert "configured Ollama model 'devstral:latest' is not installed yet" in output
 
 
 def test_doctor_command_prints_runtime_report(monkeypatch, capsys) -> None:
@@ -337,6 +343,8 @@ def test_doctor_command_prints_runtime_report(monkeypatch, capsys) -> None:
     assert "Status: degraded" in output
     assert "Local provider (ollama): unreachable" in output
     assert "Configured local chat model:" in output
+    assert "Configured agent role models:" in output
+    assert "- coding: local/ollama/devstral:latest" in output
     assert "Action: run `ollama serve`" in output
 
 
@@ -386,6 +394,32 @@ def test_models_command_prints_known_models(monkeypatch, capsys) -> None:
     assert "RouteLabs Models" in output
     assert "route-auto" in output
     assert "qwen3:4b" in output
+
+
+def test_profiles_command_lists_starter_profiles(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("sys.argv", ["router", "profiles"])
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Profiles" in output
+    assert "balanced" in output
+    assert "qwen-agent-mesh" in output
+    assert "- qwen-agent-mesh: mode=balanced, local=ollama/qwen3:4b, roles=5" in output
+
+
+def test_profiles_command_works_outside_repo_cwd(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["router", "profiles"])
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Profiles" in output
+    assert "qwen-agent-mesh" in output
+    assert "- qwen-agent-mesh: mode=balanced, local=ollama/qwen3:4b, roles=5" in output
 
 
 def test_quickstart_command_prints_adoption_paths(monkeypatch, capsys) -> None:
@@ -557,6 +591,45 @@ def test_demo_agent_tools_hermes_preset(monkeypatch, capsys) -> None:
     assert "Risk level: high" in output
 
 
+def test_demo_agent_roles_prints_configured_role_routes(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "demo", "agent-roles", "--config", "./config/router.yaml"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "RouteLabs Agent Role Demo" in output
+    assert "- planner: local/ollama/gemma3:4b" in output
+    assert "- coding: local/ollama/devstral:latest" in output
+    assert "- vision: local/ollama/qwen2.5vl:7b" in output
+
+
+def test_demo_agent_roles_accepts_single_role(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "demo",
+            "agent-roles",
+            "--config",
+            "./config/router.yaml",
+            "--role",
+            "coding",
+            "--task",
+            "Implement a parser fix",
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "Implement a parser fix" in output
+    assert "- coding: local/ollama/devstral:latest" in output
+    assert "- planner:" not in output
+
+
 def test_start_command_uses_anthropic_env_hint_when_anthropic_is_default_cloud(
     monkeypatch, capsys
 ) -> None:
@@ -636,6 +709,53 @@ def test_init_command_creates_config_with_selected_profile_and_cloud(
     assert "router quickstart --config" in output
 
 
+def test_init_command_loads_packaged_profile_outside_repo_cwd(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "qwen-agent-mesh",
+            "--output",
+            "router.yaml",
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load((tmp_path / "router.yaml").read_text(encoding="utf-8"))
+    assert data["agents"]["roles"]["coding"]["model"] == "devstral:latest"
+    assert data["agents"]["roles"]["vision"]["model"] == "qwen2.5vl:7b"
+    assert "Profile: qwen-agent-mesh" in output
+
+
+def test_init_command_profile_choices_are_discovered(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    output_path = tmp_path / "lmstudio-router.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "lmstudio-local",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    assert data["providers"]["local"]["default"] == "llamacpp"
+    assert data["providers"]["local"]["llamacpp"]["base_url"] == "http://127.0.0.1:1234/v1"
+
+
 def test_init_command_creates_hermes_profile(monkeypatch, tmp_path, capsys) -> None:
     output_path = tmp_path / "hermes-router.yaml"
     monkeypatch.setattr(
@@ -658,6 +778,31 @@ def test_init_command_creates_hermes_profile(monkeypatch, tmp_path, capsys) -> N
     assert "mcp__hermes__send_*" in data["policies"]["tools"]["approval_required_patterns"]
     assert "mcp__hermes__read_memory" in data["policies"]["tools"]["trusted_tool_patterns"]
     assert "Profile: hermes-agent" in output
+
+
+def test_init_command_creates_qwen_agent_mesh_profile(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "qwen-agent-mesh.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "router",
+            "init",
+            "--profile",
+            "qwen-agent-mesh",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    assert data["agents"]["roles"]["coding"]["model"] == "devstral:latest"
+    assert data["agents"]["roles"]["vision"]["model"] == "qwen2.5vl:7b"
+    assert "Profile: qwen-agent-mesh" in output
 
 
 def test_init_command_creates_litellm_proxy_profile(

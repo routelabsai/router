@@ -25,6 +25,10 @@ class RouterEngine:
             trusted_tool_patterns=self.config.policies.tools.trusted_tool_patterns,
         )
 
+        role_decision = self._agent_role_decision(request, complexity, agent_tools)
+        if role_decision is not None:
+            return role_decision
+
         if request.private and self.config.routing.prefer_local_for_private:
             return RouteDecision(
                 target="local",
@@ -65,6 +69,57 @@ class RouterEngine:
             reason="task is suitable for local-first execution",
             complexity=complexity,
             verify=complexity == "medium",
+            agent_tools=agent_tools,
+        )
+
+    def _agent_role_decision(
+        self,
+        request: RouteRequest,
+        complexity: str,
+        agent_tools: AgentToolTrace,
+    ) -> RouteDecision | None:
+        if not self.config.agents.enabled or request.agent_role is None:
+            return None
+
+        role_name = request.agent_role.strip().lower()
+        if not role_name:
+            return None
+
+        role = self.config.agents.roles.get(role_name)
+        if role is None:
+            return None
+
+        target = role.target
+        provider = role.provider or (
+            self.config.providers.local.default
+            if target == "local"
+            else self.config.providers.cloud.default
+        )
+        model = role.model
+
+        if (
+            request.private
+            and target == "cloud"
+            and self.config.policies.privacy.deny_cloud_when_private
+        ):
+            target = "local"
+            provider = self.config.providers.local.default
+            model = self._provider_model("local", provider)
+            reason = (
+                f"agent role '{role_name}' requested cloud execution, "
+                "but privacy policy forced local execution"
+            )
+        else:
+            reason = f"agent role '{role_name}' selected {provider}/{model}"
+
+        return RouteDecision(
+            target=target,
+            provider=provider,
+            model=model,
+            reason=reason,
+            complexity=complexity,
+            verify=role.verify or agent_tools.approval_required,
+            agent_role=role_name,
             agent_tools=agent_tools,
         )
 

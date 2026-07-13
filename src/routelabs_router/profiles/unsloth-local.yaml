@@ -1,0 +1,25 @@
+server:
+  port: 8000
+
+routing:
+  default_mode: local-first
+  escalate_on_verification_failure: true
+  prefer_local_for_private: true
+
+providers:
+  local:
+    default: ollama
+    ollama:
+      model: your-unsloth-model
+      embedding_model: embeddinggemma
+  cloud:
+    default: openai-compatible
+    openai_compatible:
+      model: gpt-4.1-mini
+      embedding_model: text-embedding-3-small
+
+policies:
+  privacy:
+    deny_cloud_when_private: true
+  complexity:
+    local_max: medium

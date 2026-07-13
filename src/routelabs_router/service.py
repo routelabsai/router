@@ -115,6 +115,7 @@ class ChatService:
                 cloud_route = self._cloud_route(
                     initial_route.complexity,
                     agent_tools=trace.agent_tools,
+                    agent_role=initial_route.agent_role,
                 )
                 trace.escalated = True
                 trace.escalation_reason = verification.reason
@@ -402,6 +403,12 @@ class ChatService:
             ),
         ]
         models.extend(
+            self._agent_role_model_cards(
+                installed_lookup=installed_lookup,
+                llamacpp_lookup=llamacpp_lookup,
+            )
+        )
+        models.extend(
             ModelCard(
                 id=item["id"],
                 owned_by="routelabs-local",
@@ -445,6 +452,69 @@ class ChatService:
             seen[model.id] = len(deduped)
             deduped.append(model)
         return ModelsListResponse(data=deduped)
+
+    def _agent_role_model_cards(
+        self,
+        installed_lookup: dict[str, dict[str, object]],
+        llamacpp_lookup: dict[str, dict[str, object]],
+    ) -> list[ModelCard]:
+        cards: list[ModelCard] = []
+        for role_name, role in sorted(self.config.agents.roles.items()):
+            target = role.target
+            provider = role.provider or (
+                self.config.providers.local.default
+                if target == "local"
+                else self.config.providers.cloud.default
+            )
+            installed, status, size_bytes = self._agent_role_model_status(
+                provider=provider,
+                model=role.model,
+                installed_lookup=installed_lookup,
+                llamacpp_lookup=llamacpp_lookup,
+            )
+            cards.append(
+                ModelCard(
+                    id=role.model,
+                    owned_by=(
+                        "routelabs-local"
+                        if target == "local"
+                        else "routelabs-cloud"
+                    ),
+                    provider=provider,
+                    source=f"agent_role:{role_name}",
+                    installed=installed,
+                    status=status,
+                    size_bytes=size_bytes,
+                )
+            )
+        return cards
+
+    def _agent_role_model_status(
+        self,
+        provider: str,
+        model: str,
+        installed_lookup: dict[str, dict[str, object]],
+        llamacpp_lookup: dict[str, dict[str, object]],
+    ) -> tuple[bool | None, str, int | None]:
+        if provider == "ollama":
+            installed = model in installed_lookup
+            raw_size = installed_lookup.get(model, {}).get("size_bytes")
+            size_bytes = raw_size if isinstance(raw_size, int) else None
+            return (
+                installed,
+                "installed" if installed else "configured",
+                size_bytes,
+            )
+        if provider == "llamacpp":
+            installed = model in llamacpp_lookup
+            return installed, "ready" if installed else "configured", None
+        if provider == "openai-compatible":
+            configured = self._openai_compatible_cloud_configured()
+            return configured, "configured" if configured else "not_configured", None
+        if provider == "anthropic":
+            configured = self.config.providers.cloud.anthropic.api_key is not None
+            return configured, "configured" if configured else "not_configured", None
+        return None, "unknown", None
 
     def health(self) -> HealthResponse:
         providers = {
@@ -497,6 +567,7 @@ class ChatService:
         self,
         complexity: str,
         agent_tools: AgentToolTrace | None = None,
+        agent_role: str | None = None,
     ) -> RouteDecision:
         return RouteDecision(
             target="cloud",
@@ -505,6 +576,7 @@ class ChatService:
             reason="verification requested escalation to a stronger remote model",
             complexity=complexity,
             verify=False,
+            agent_role=agent_role,
             agent_tools=agent_tools,
         )
 
@@ -576,6 +648,7 @@ class ChatService:
             fallback_route = self._cloud_route(
                 route.complexity,
                 agent_tools=trace.agent_tools,
+                agent_role=route.agent_role,
             )
             trace.escalated = True
             trace.escalation_reason = (
@@ -677,6 +750,7 @@ class ChatService:
             fallback_route = self._cloud_route(
                 route.complexity,
                 agent_tools=trace.agent_tools,
+                agent_role=route.agent_role,
             )
             trace.escalated = True
             trace.escalation_reason = "local provider was unavailable, falling back to cloud"
@@ -937,6 +1011,7 @@ def _route_request_from_chat(
         tool_descriptions=_tool_descriptions_from_tools(request.tools),
         tool_count=len(request.tools or []),
         tool_choice=request.tool_choice,
+        agent_role=request.agent_role,
     )
 
 
@@ -1040,6 +1115,7 @@ def _build_decision_summary(trace: DecisionTrace) -> DecisionSummary:
         provider=route.provider,
         model=route.model,
         reason=reason,
+        agent_role=route.agent_role,
         privacy=privacy,
         verification=verification,
         agent_tool_risk=agent_tool_risk,
@@ -1171,6 +1247,7 @@ def _responses_request_to_chat_request(
     return ChatCompletionRequest(
         messages=messages,
         model=request.model,
+        agent_role=request.agent_role,
         private=request.private,
         allow_fallbacks=request.allow_fallbacks,
         max_cloud_cost_usd=request.max_cloud_cost_usd,
@@ -1201,6 +1278,7 @@ def _anthropic_request_to_chat_request(
     return ChatCompletionRequest(
         messages=messages,
         model=request.model,
+        agent_role=request.agent_role,
         private=request.private,
         allow_fallbacks=request.allow_fallbacks,
         max_cloud_cost_usd=request.max_cloud_cost_usd,

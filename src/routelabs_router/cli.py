@@ -1,4 +1,5 @@
 import argparse
+from importlib.resources import files
 from pathlib import Path
 
 import uvicorn
@@ -8,7 +9,6 @@ from routelabs_router.config import DEFAULT_CONFIG, load_config
 from routelabs_router.hardware import detect_machine_profile, recommend_local_model
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
-from routelabs_router.server.app import create_app
 from routelabs_router.service import ChatService
 
 
@@ -19,6 +19,11 @@ def main() -> None:
     route_parser = subparsers.add_parser("route", help="Inspect a routing decision")
     route_parser.add_argument("--config", default="./config/router.yaml")
     route_parser.add_argument("--task", required=True)
+    route_parser.add_argument(
+        "--agent-role",
+        default=None,
+        help="Route through a configured agent role such as planner, coding, vision, or reflection",
+    )
     route_parser.add_argument(
         "--private",
         default="false",
@@ -65,6 +70,10 @@ def main() -> None:
         "models", help="List configured and discovered models"
     )
     models_parser.add_argument("--config", default="./config/router.yaml")
+
+    subparsers.add_parser(
+        "profiles", help="List starter config profiles available for router init"
+    )
 
     quickstart_parser = subparsers.add_parser(
         "quickstart", help="Show the fastest setup path for local, OpenAI, and Anthropic use"
@@ -114,6 +123,21 @@ def main() -> None:
         default=None,
         help="Tool name to analyze for MCP-style and approval-risk signals",
     )
+    agent_roles_parser = demo_subparsers.add_parser(
+        "agent-roles",
+        help="Show role-aware routing for planner, coding, vision, and reflection",
+    )
+    agent_roles_parser.add_argument("--config", default="./config/router.yaml")
+    agent_roles_parser.add_argument(
+        "--role",
+        default=None,
+        help="Show one configured role instead of all roles",
+    )
+    agent_roles_parser.add_argument(
+        "--task",
+        default="Route this workflow step through the right local agent lane",
+        help="Task text to route through each role",
+    )
 
     init_parser = subparsers.add_parser(
         "init", help="Create a starter router config from a profile"
@@ -121,17 +145,7 @@ def main() -> None:
     init_parser.add_argument(
         "--profile",
         default="balanced",
-        choices=(
-            "balanced",
-            "local-first",
-            "privacy-first",
-            "openclaw",
-            "hermes-agent",
-            "unsloth-local",
-            "llamacpp-local",
-            "lmstudio-local",
-            "litellm-proxy",
-        ),
+        choices=_available_profile_names(),
     )
     init_parser.add_argument(
         "--cloud",
@@ -168,6 +182,7 @@ def main() -> None:
         decision = service.inspect_route(
             RouteRequest(
                 task=args.task,
+                agent_role=args.agent_role,
                 private=args.private == "true",
                 allow_fallbacks=args.allow_fallbacks == "true",
                 max_cloud_cost_usd=args.max_cloud_cost_usd,
@@ -184,6 +199,8 @@ def main() -> None:
     elif args.command == "models":
         config = load_config(Path(args.config))
         _print_models(ChatService(config))
+    elif args.command == "profiles":
+        _print_profiles()
     elif args.command == "quickstart":
         config = load_config(Path(args.config))
         _print_quickstart(ChatService(config), config)
@@ -198,6 +215,13 @@ def main() -> None:
             tool_name=args.tool_name or scenario["tool_name"],
             preset=args.preset,
         )
+    elif args.command == "demo" and args.demo == "agent-roles":
+        config = load_config(Path(args.config))
+        _print_agent_roles_demo(
+            config=config,
+            task=args.task,
+            role=args.role,
+        )
     elif args.command == "init":
         _write_init_config(
             profile=args.profile,
@@ -208,6 +232,8 @@ def main() -> None:
     elif args.command == "start":
         config = load_config(Path(args.config))
         _print_startup_status(config)
+        from routelabs_router.server.app import create_app
+
         app = create_app(Path(args.config))
         uvicorn.run(
             app,
@@ -281,6 +307,14 @@ def _print_doctor_report(service: ChatService, config) -> None:
         "Configured cloud embedding model: "
         f"{config.providers.cloud.openai_compatible.embedding_model or config.providers.cloud.openai_compatible.model}"
     )
+    role_bindings = _agent_role_model_bindings(config)
+    if role_bindings:
+        print("Configured agent role models:")
+        for role_name, target, provider, model, verify in role_bindings:
+            print(
+                f"- {role_name}: {target}/{provider}/{model}, "
+                f"verify={verify}"
+            )
 
     installed_ollama_models = [
         model
@@ -294,11 +328,7 @@ def _print_doctor_report(service: ChatService, config) -> None:
     else:
         print("Installed Ollama models: none detected")
 
-    configured_local_models = {
-        config.providers.local.ollama.model,
-        config.providers.local.ollama.embedding_model
-        or config.providers.local.ollama.model,
-    }
+    configured_local_models = set(_configured_ollama_model_ids(config))
     installed_ids = {model.id for model in installed_ollama_models}
     missing = sorted(
         model for model in configured_local_models if model not in installed_ids
@@ -322,6 +352,8 @@ def _print_route_decision(decision) -> None:
     print(f"reason: {decision.reason}")
     print(f"complexity: {decision.complexity}")
     print(f"verify: {decision.verify}")
+    if decision.agent_role is not None:
+        print(f"agent_role: {decision.agent_role}")
     if decision.provider_available is not None:
         print(f"provider_available: {decision.provider_available}")
     if decision.provider_status is not None:
@@ -515,6 +547,42 @@ def _print_agent_tools_demo(
             print(f"  - {reason}")
 
 
+def _print_agent_roles_demo(
+    config,
+    task: str,
+    role: str | None = None,
+) -> None:
+    engine = RouterEngine(config)
+    role_names = _selected_agent_role_names(config, role)
+
+    print("RouteLabs Agent Role Demo")
+    print("Role-aware local-first routing for agent workflow steps")
+    print("")
+    print(f"Task: {task}")
+
+    if not role_names:
+        if role:
+            print(f"No configured agent role named '{role}'.")
+        else:
+            print("No configured agent roles.")
+        return
+
+    print("")
+    print("Role routes:")
+    for role_name in role_names:
+        decision = engine.decide(
+            RouteRequest(
+                task=task,
+                agent_role=role_name,
+            )
+        )
+        print(
+            f"- {role_name}: {decision.target}/{decision.provider}/"
+            f"{decision.model}, verify={decision.verify}"
+        )
+        print(f"  reason: {decision.reason}")
+
+
 def _write_init_config(
     profile: str,
     cloud: str,
@@ -528,9 +596,8 @@ def _write_init_config(
         )
         raise SystemExit(1)
 
-    profile_path = Path("./config/profiles") / f"{profile}.yaml"
     base = DEFAULT_CONFIG.model_dump()
-    profile_data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    profile_data = _load_profile_data(profile)
     merged = _deep_merge_dicts(base, profile_data)
     merged["providers"]["cloud"]["default"] = cloud
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -577,14 +644,63 @@ def _print_models(service: ChatService) -> None:
         )
 
 
+def _print_profiles() -> None:
+    print("RouteLabs Profiles")
+    print("Starter configs available for `router init --profile`:")
+    for profile_name in _available_profile_names():
+        profile = _load_profile_data(profile_name)
+        merged_profile = _deep_merge_dicts(DEFAULT_CONFIG.model_dump(), profile)
+        default_mode = merged_profile.get("routing", {}).get(
+            "default_mode", "balanced"
+        )
+        local = merged_profile.get("providers", {}).get("local", {})
+        local_provider = local.get("default", "ollama")
+        local_model = _profile_local_model(merged_profile, local_provider)
+        roles = profile.get("agents", {}).get("roles", {})
+        role_count = len(roles) if isinstance(roles, dict) else 0
+        role_suffix = f", roles={role_count}" if role_count else ""
+        print(
+            f"- {profile_name}: mode={default_mode}, "
+            f"local={local_provider}/{local_model}{role_suffix}"
+        )
+
+
+def _profile_local_model(profile: dict, local_provider: str) -> str:
+    local = profile.get("providers", {}).get("local", {})
+    provider = local.get(local_provider, {}) if isinstance(local, dict) else {}
+    if isinstance(provider, dict):
+        return str(provider.get("model", "default"))
+    return "default"
+
+
+def _load_profile_data(profile: str) -> dict:
+    profile_filename = f"{profile}.yaml"
+    profile_path = Path("./config/profiles") / profile_filename
+    if profile_path.exists():
+        return yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+
+    profile_resource = files("routelabs_router.profiles").joinpath(profile_filename)
+    return yaml.safe_load(profile_resource.read_text(encoding="utf-8")) or {}
+
+
+def _available_profile_names() -> list[str]:
+    names = set()
+    source_profiles = Path("./config/profiles")
+    if source_profiles.exists():
+        names.update(path.stem for path in source_profiles.glob("*.yaml"))
+    package_profiles = files("routelabs_router.profiles")
+    names.update(
+        path.name.removesuffix(".yaml")
+        for path in package_profiles.iterdir()
+        if path.name.endswith(".yaml")
+    )
+    return sorted(names)
+
+
 def _missing_configured_ollama_models(service: ChatService, config) -> list[str]:
     if config.providers.local.default != "ollama":
         return []
-    configured_local_models = {
-        config.providers.local.ollama.model,
-        config.providers.local.ollama.embedding_model
-        or config.providers.local.ollama.model,
-    }
+    configured_local_models = set(_configured_ollama_model_ids(config))
     installed_ids = {
         model.id
         for model in service.list_models().data
@@ -593,6 +709,52 @@ def _missing_configured_ollama_models(service: ChatService, config) -> list[str]
     return sorted(
         model for model in configured_local_models if model not in installed_ids
     )
+
+
+def _configured_ollama_model_ids(config) -> list[str]:
+    model_ids = {
+        config.providers.local.ollama.model,
+        config.providers.local.ollama.embedding_model
+        or config.providers.local.ollama.model,
+    }
+    for role in config.agents.roles.values():
+        if _agent_role_uses_ollama(config, role):
+            model_ids.add(role.model)
+    return sorted(model for model in model_ids if model)
+
+
+def _agent_role_uses_ollama(config, role) -> bool:
+    target = role.target
+    provider = role.provider or (
+        config.providers.local.default
+        if target == "local"
+        else config.providers.cloud.default
+    )
+    return target == "local" and provider == "ollama"
+
+
+def _agent_role_model_bindings(config) -> list[tuple[str, str, str, str, bool]]:
+    bindings = []
+    for role_name, role in sorted(config.agents.roles.items()):
+        target = role.target
+        provider = role.provider or (
+            config.providers.local.default
+            if target == "local"
+            else config.providers.cloud.default
+        )
+        bindings.append((role_name, target, provider, role.model, role.verify))
+    return bindings
+
+
+def _selected_agent_role_names(config, role: str | None) -> list[str]:
+    configured = sorted(config.agents.roles)
+    if role is None:
+        preferred = ["router", "planner", "coding", "vision", "reflection"]
+        ordered = [name for name in preferred if name in config.agents.roles]
+        ordered.extend(name for name in configured if name not in ordered)
+        return ordered
+    role_name = role.strip().lower()
+    return [role_name] if role_name in config.agents.roles else []
 
 
 def _local_chat_model(config) -> str:

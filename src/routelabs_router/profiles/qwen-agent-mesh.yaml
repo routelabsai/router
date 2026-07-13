@@ -1,0 +1,34 @@
+agents:
+  enabled: true
+  roles:
+    router:
+      target: "local"
+      provider: "ollama"
+      model: "qwen3:4b"
+      verify: true
+      description: "Top-level Qwen3 request triage"
+    planner:
+      target: "local"
+      provider: "ollama"
+      model: "gemma3:4b"
+      verify: true
+      description: "Gemma planning and task decomposition"
+    coding:
+      target: "local"
+      provider: "ollama"
+      model: "devstral:latest"
+      verify: true
+      description: "Devstral code generation and debugging"
+    vision:
+      target: "local"
+      provider: "ollama"
+      model: "qwen2.5vl:7b"
+      verify: true
+      description: "Qwen VL image and multimodal reasoning"
+    reflection:
+      target: "local"
+      provider: "ollama"
+      model: "gemma3:4b"
+      verify: false
+      description: "Gemma final critique and answer review"
+

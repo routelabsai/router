@@ -55,6 +55,7 @@ Today the repository supports:
 - `/v1/models` for OpenAI-compatible model discovery
 - live `Ollama` model inventory folded into `/v1/models` when available
 - local OpenAI-compatible model inventory folded into `/v1/models` when available
+- configured agent-role model inventory folded into `/v1/models`
 - OpenAI-style tool-call passthrough through `/v1/chat/completions`
 - MCP/tool metadata risk detection for suspicious tool descriptions
 - OpenAI-style SSE streaming through `/v1/chat/completions`
@@ -77,6 +78,7 @@ The current execution behavior is intentionally conservative but now genuinely h
 
 - `/healthz` reports whether the system is healthy, degraded, or unusable based on live provider readiness
 - `/v1/route` is a planning endpoint that now includes provider availability and fallback availability metadata
+- Python client helpers can pass `agent_role` through route, chat, responses, and messages calls
 - local routes execute through `Ollama` by default, or through a configured
   OpenAI-compatible local runtime
 - cloud routes execute through a generic OpenAI-compatible adapter when an API key is configured

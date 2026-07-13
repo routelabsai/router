@@ -42,7 +42,19 @@ router start
 pytest
 ```
 
-2. Verify normal non-editable install
+2. Run the installed-wheel smoke test
+
+```bash
+python scripts/release_smoke.py
+```
+
+This builds a wheel, installs it into a temporary virtualenv, and verifies:
+
+- `router profiles`
+- `router init --profile qwen-agent-mesh`
+- import of `routelabs_router.server.app` outside a source checkout
+
+3. Verify normal non-editable install
 
 ```bash
 pip install .
@@ -50,9 +62,9 @@ router --help
 router start --help
 ```
 
-3. Bump version in `pyproject.toml`
+4. Bump version in `pyproject.toml`
 
-4. Commit and push the version bump
+5. Commit and push the version bump
 
 ```bash
 git add .
@@ -60,7 +72,7 @@ git commit -m "Release vX.Y.Z"
 git push origin main
 ```
 
-5. Build distributions locally as a sanity check
+6. Build distributions locally as a sanity check
 
 ```bash
 python -m pip install --upgrade build twine
@@ -68,14 +80,14 @@ python -m build
 python -m twine check dist/*
 ```
 
-6. Create and push the release tag to trigger GitHub Actions publishing
+7. Create and push the release tag to trigger GitHub Actions publishing
 
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-7. Verify the published package from a fresh environment
+8. Verify the published package from a fresh environment
 
 ```bash
 pip install routelabs-router

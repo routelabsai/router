@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProviderConfig(BaseModel):
@@ -42,6 +42,19 @@ class RoutingConfig(BaseModel):
     default_mode: str
     escalate_on_verification_failure: bool
     prefer_local_for_private: bool
+
+
+class AgentRouteConfig(BaseModel):
+    target: str = "local"
+    provider: str | None = None
+    model: str
+    verify: bool = True
+    description: str | None = None
+
+
+class AgentRoutingConfig(BaseModel):
+    enabled: bool = True
+    roles: dict[str, AgentRouteConfig] = Field(default_factory=dict)
 
 
 class PrivacyPolicyConfig(BaseModel):
@@ -122,6 +135,7 @@ class TelemetryConfig(BaseModel):
 class Config(BaseModel):
     server: ServerConfig
     routing: RoutingConfig
+    agents: AgentRoutingConfig = Field(default_factory=AgentRoutingConfig)
     providers: ProvidersConfig
     policies: PoliciesConfig
     telemetry: TelemetryConfig
@@ -134,6 +148,46 @@ DEFAULT_CONFIG = Config.model_validate(
             "default_mode": "balanced",
             "escalate_on_verification_failure": True,
             "prefer_local_for_private": True,
+        },
+        "agents": {
+            "enabled": True,
+            "roles": {
+                "router": {
+                    "target": "local",
+                    "provider": "ollama",
+                    "model": "qwen3:4b",
+                    "verify": True,
+                    "description": "Top-level request triage and dispatch",
+                },
+                "planner": {
+                    "target": "local",
+                    "provider": "ollama",
+                    "model": "gemma3:4b",
+                    "verify": True,
+                    "description": "Task decomposition and plan synthesis",
+                },
+                "coding": {
+                    "target": "local",
+                    "provider": "ollama",
+                    "model": "devstral:latest",
+                    "verify": True,
+                    "description": "Code generation, edits, and debugging",
+                },
+                "vision": {
+                    "target": "local",
+                    "provider": "ollama",
+                    "model": "qwen2.5vl:7b",
+                    "verify": True,
+                    "description": "Image and multimodal reasoning",
+                },
+                "reflection": {
+                    "target": "local",
+                    "provider": "ollama",
+                    "model": "gemma3:4b",
+                    "verify": False,
+                    "description": "Final critique and answer review",
+                },
+            },
         },
         "providers": {
             "local": {

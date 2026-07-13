@@ -39,6 +39,7 @@ The goal is simple: keep easy and sensitive work local, escalate only when neede
 
 Current agent-framework guides:
 
+- Agent role routing: [examples/agent-role-routing.md](examples/agent-role-routing.md)
 - OpenClaw gateway: [examples/openclaw.md](examples/openclaw.md)
 - Hermes Agent gateway: [examples/hermes-agent.md](examples/hermes-agent.md)
 
@@ -185,6 +186,7 @@ from routelabs_router import RouteLabsClient
 
 client = RouteLabsClient("http://127.0.0.1:8000")
 print(client.route("Summarize a short product description"))
+print(client.route("Implement a parser fix", agent_role="coding"))
 ```
 
 ### 3. As an OpenAI-compatible or Anthropic-compatible endpoint
@@ -413,6 +415,8 @@ This is an early but usable product foundation. The repository already includes:
 - tool-call passthrough for OpenAI-style clients
 - MCP-style agent tool traces and configurable tool-risk policies
 - zero-setup `router demo agent-tools` presets for filesystem, OpenClaw, and Hermes scenarios
+- configurable agent-role routing for planner, coding, vision, and reflection lanes
+- `router demo agent-roles` and `qwen-agent-mesh` starter profile
 - OpenAI-style SSE streaming on `/v1/chat/completions`
 - structured-output passthrough and JSON-mode support
 - real local execution through `Ollama`
@@ -498,6 +502,7 @@ If you see `requires a different Python: 3.9.7 not in '>=3.11'`, create the `con
 
 ```bash
 pytest
+python scripts/release_smoke.py
 ```
 
 ### Optional profile configs
@@ -510,6 +515,7 @@ The repo includes starter profiles in [`config/profiles/`](config/profiles):
 - `lmstudio-local.yaml`
 - `openclaw.yaml`
 - `hermes-agent.yaml`
+- `qwen-agent-mesh.yaml`
 - `litellm-proxy.yaml`
 - `privacy-first.yaml`
 - `unsloth-local.yaml`
@@ -608,9 +614,19 @@ This shows:
 
 - local and cloud provider readiness
 - configured chat and embedding models
+- configured agent role models
 - installed `Ollama` models when RouteLabs can detect them
 - missing configured local models
 - the next setup action if something is unavailable
+
+### List starter profiles
+
+```bash
+router profiles
+```
+
+This lists starter configs available to `router init --profile`, including the
+agent mesh profile.
 
 ### List visible models
 
@@ -618,18 +634,22 @@ This shows:
 router models
 ```
 
+This shows:
+
+- virtual models like `route-auto`
+- configured local and cloud models
+- configured agent role models such as planner, coding, vision, and reflection
+- installed `Ollama` models discovered live
+- whether each model is `installed`, `configured`, or `not_configured`
+
 ### Show the fastest next setup path
 
 ```bash
 router quickstart
 ```
 
-This shows:
-
-- virtual models like `route-auto`
-- configured local and cloud models
-- installed `Ollama` models discovered live
-- whether each model is `installed`, `configured`, or `not_configured`
+This prints the current readiness state plus the quickest local, OpenAI-compatible,
+and Anthropic-compatible setup paths.
 
 ### Demo agent tool risk tracing
 
@@ -643,6 +663,16 @@ This prints a local planning trace for an MCP-style tool request, including:
 - MCP-style tool detection
 - approval-risk level and reason
 - trace reasons that can be inspected before any model or tool executes
+
+### Demo agent role routing
+
+```bash
+router demo agent-roles
+router demo agent-roles --role coding
+```
+
+This previews configured planner, coding, vision, and reflection lanes without
+starting the server.
 
 ### Test the API
 
@@ -810,6 +840,7 @@ from routelabs_router import RouteLabsClient
 client = RouteLabsClient("http://127.0.0.1:8000")
 
 route = client.route("Summarize a short product description")
+coding_route = client.route("Implement a parser fix", agent_role="coding")
 chat = client.chat(
     [
         {
@@ -817,6 +848,11 @@ chat = client.chat(
             "content": "Summarize this in one sentence: RouteLabs Router chooses between local and cloud models based on privacy, cost, latency, and task complexity.",
         }
     ]
+)
+coding_chat = client.chat(
+    [{"role": "user", "content": "Write a small route-policy validator."}],
+    model="route-auto",
+    agent_role="coding",
 )
 embeddings = client.embeddings(
     "RouteLabs Router chooses between local and cloud models based on privacy and task complexity."

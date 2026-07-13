@@ -43,6 +43,20 @@ def test_client_route(monkeypatch) -> None:
     assert response["json"] == {"task": "summarize text", "private": True}
 
 
+def test_client_route_supports_agent_role(monkeypatch) -> None:
+    fake = FakeHTTPClient()
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+
+    client = RouteLabsClient("http://example.test")
+    response = client.route("Implement a parser fix", agent_role="coding")
+
+    assert response["json"] == {
+        "task": "Implement a parser fix",
+        "private": False,
+        "agent_role": "coding",
+    }
+
+
 def test_client_chat_stats_logs_and_health(monkeypatch) -> None:
     fake = FakeHTTPClient()
     monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
@@ -75,6 +89,7 @@ def test_client_chat_supports_agent_loop_fields(monkeypatch) -> None:
     client.chat(
         [{"role": "user", "content": "What's the weather in Chicago?"}],
         model="route-auto",
+        agent_role="planner",
         tools=[
             {
                 "type": "function",
@@ -89,6 +104,7 @@ def test_client_chat_supports_agent_loop_fields(monkeypatch) -> None:
 
     payload = fake.calls[0][2]
     assert payload["model"] == "route-auto"
+    assert payload["agent_role"] == "planner"
     assert payload["tools"][0]["function"]["name"] == "get_weather"
     assert payload["tool_choice"] == "auto"
 
@@ -101,6 +117,7 @@ def test_client_responses_supports_openai_style_fields(monkeypatch) -> None:
     client.responses(
         [{"role": "user", "content": "Return valid JSON"}],
         model="route-auto",
+        agent_role="reflection",
         instructions="Be concise",
         text={"format": {"type": "json_object"}},
         max_output_tokens=120,
@@ -109,6 +126,7 @@ def test_client_responses_supports_openai_style_fields(monkeypatch) -> None:
     method, url, payload = fake.calls[0]
     assert method == "POST"
     assert url == "http://example.test/v1/responses"
+    assert payload["agent_role"] == "reflection"
     assert payload["instructions"] == "Be concise"
     assert payload["text"]["format"]["type"] == "json_object"
     assert payload["max_output_tokens"] == 120
@@ -122,6 +140,7 @@ def test_client_messages_supports_anthropic_style_fields(monkeypatch) -> None:
     client.messages(
         [{"role": "user", "content": "Hello Claude"}],
         model="claude-sonnet-4-20250514",
+        agent_role="planner",
         system="Be concise",
         max_tokens=256,
         tool_choice={"type": "auto"},
@@ -130,6 +149,7 @@ def test_client_messages_supports_anthropic_style_fields(monkeypatch) -> None:
     method, url, payload = fake.calls[0]
     assert method == "POST"
     assert url == "http://example.test/v1/messages"
+    assert payload["agent_role"] == "planner"
     assert payload["system"] == "Be concise"
     assert payload["max_tokens"] == 256
     assert payload["tool_choice"]["type"] == "auto"

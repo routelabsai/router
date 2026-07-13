@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class RouteRequest(BaseModel):
     task: str = Field(..., min_length=1)
+    agent_role: str | None = None
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
@@ -35,6 +36,7 @@ class RouteDecision(BaseModel):
     reason: str
     complexity: str
     verify: bool
+    agent_role: str | None = None
     provider_available: bool | None = None
     provider_status: str | None = None
     fallback_available: bool | None = None
@@ -54,6 +56,7 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1)
     model: str | None = None
+    agent_role: str | None = None
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
@@ -77,6 +80,7 @@ class ResponsesTextConfig(BaseModel):
 class ResponsesRequest(BaseModel):
     input: str | list[Any]
     model: str | None = None
+    agent_role: str | None = None
     instructions: str | None = None
     private: bool = False
     allow_fallbacks: bool = True
@@ -191,6 +195,7 @@ class AnthropicToolChoice(BaseModel):
 class AnthropicMessagesRequest(BaseModel):
     messages: list[AnthropicMessageRequest] = Field(..., min_length=1)
     model: str | None = None
+    agent_role: str | None = None
     system: str | list[dict[str, Any]] | None = None
     max_tokens: int = 1024
     private: bool = False
@@ -269,6 +274,7 @@ class DecisionSummary(BaseModel):
     provider: str
     model: str
     reason: str
+    agent_role: str | None = None
     privacy: str = "not_detected"
     verification: str = "not_run"
     agent_tool_risk: str = "none"

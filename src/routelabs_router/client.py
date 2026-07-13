@@ -12,11 +12,19 @@ class RouteLabsClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def route(self, task: str, private: bool = False) -> dict[str, Any]:
+    def route(
+        self,
+        task: str,
+        private: bool = False,
+        agent_role: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"task": task, "private": private}
+        if agent_role is not None:
+            payload["agent_role"] = agent_role
         return self._request(
             "POST",
             "/v1/route",
-            json={"task": task, "private": private},
+            json=payload,
         )
 
     def chat(
@@ -24,6 +32,7 @@ class RouteLabsClient:
         messages: list[dict[str, str]],
         private: bool = False,
         model: str | None = None,
+        agent_role: str | None = None,
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
@@ -43,6 +52,8 @@ class RouteLabsClient:
         }
         if model is not None:
             payload["model"] = model
+        if agent_role is not None:
+            payload["agent_role"] = agent_role
         if response_format is not None:
             payload["response_format"] = response_format
         if tools is not None:
@@ -69,6 +80,7 @@ class RouteLabsClient:
         self,
         input: str | list[dict[str, Any]],
         model: str | None = None,
+        agent_role: str | None = None,
         instructions: str | None = None,
         private: bool = False,
         stream: bool = False,
@@ -90,6 +102,8 @@ class RouteLabsClient:
         }
         if model is not None:
             payload["model"] = model
+        if agent_role is not None:
+            payload["agent_role"] = agent_role
         if instructions is not None:
             payload["instructions"] = instructions
         if text is not None:
@@ -118,6 +132,7 @@ class RouteLabsClient:
         self,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        agent_role: str | None = None,
         system: str | list[dict[str, Any]] | None = None,
         max_tokens: int = 1024,
         private: bool = False,
@@ -136,6 +151,8 @@ class RouteLabsClient:
         }
         if model is not None:
             payload["model"] = model
+        if agent_role is not None:
+            payload["agent_role"] = agent_role
         if system is not None:
             payload["system"] = system
         if tools is not None:

@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Highlights:
+
+- configurable `agent_role` routing for router, planner, coding, vision, and reflection lanes
+- `qwen-agent-mesh` profile for Qwen3, Gemma, Devstral, and Qwen VL local agent meshes
+- `router demo agent-roles` for previewing role-aware routing without starting a server
+- `router profiles` for listing starter profiles available to `router init`
+- `router route --agent-role` for inspecting role-specific route decisions
+- `router init --profile qwen-agent-mesh` for scaffolding the agent mesh profile
+- `router init --profile` choices are now discovered from the packaged profile set
+- starter profiles are now packaged with the CLI so `router init --profile ...` works outside a source checkout
+- release tests now verify packaged starter profiles match the source profile files
+- installed CLI and ASGI imports no longer require `./config/router.yaml` to exist for non-server commands
+- `scripts/release_smoke.py` builds a wheel and smoke-tests the installed CLI from a temp environment
+- PyPI publish workflow now runs tests and the installed-wheel smoke before building publish artifacts
+- `router doctor`, startup warnings, and `/v1/models` now include configured agent role models
+- Python client helpers now accept `agent_role` for route, chat, responses, and messages calls
+- agent role traces are preserved through verification escalation and provider fallback
+- packaging metadata now uses modern SPDX license fields
+
+Suggested preview test:
+
+```bash
+router init --profile qwen-agent-mesh --output ./config/router.yaml
+router doctor --config ./config/router.yaml
+router demo agent-roles --config ./config/router.yaml
+router route --config ./config/router.yaml --task "Implement a parser fix" --agent-role coding
+```
+
 ## 0.4.0
 
 This release expands RouteLabs Router from an Ollama-first gateway into a more

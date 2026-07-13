@@ -1,0 +1,49 @@
+server:
+  port: 8000
+
+routing:
+  default_mode: local-first
+  escalate_on_verification_failure: true
+  prefer_local_for_private: true
+
+providers:
+  local:
+    default: ollama
+    ollama:
+      model: qwen3:4b
+      embedding_model: embeddinggemma
+  cloud:
+    default: openai-compatible
+    openai_compatible:
+      model: gpt-4.1-mini
+      embedding_model: text-embedding-3-small
+
+policies:
+  privacy:
+    deny_cloud_when_private: true
+  complexity:
+    local_max: high
+  tools:
+    approval_required_patterns:
+      - "write"
+      - "delete"
+      - "send"
+      - "email"
+      - "shell"
+      - "exec"
+      - "terminal"
+      - "mcp__hermes__send_*"
+      - "mcp__hermes__write_*"
+      - "mcp__hermes__shell_*"
+      - "mcp__hermes__calendar__create*"
+    review_recommended_patterns:
+      - "read"
+      - "search"
+      - "fetch"
+      - "database"
+      - "calendar"
+      - "mcp__hermes__search_*"
+      - "mcp__hermes__calendar__read*"
+    trusted_tool_patterns:
+      - "mcp__hermes__read_memory"
+      - "mcp__hermes__search_memory"

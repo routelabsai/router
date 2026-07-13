@@ -236,6 +236,24 @@ def test_route_endpoint_returns_provider_metadata() -> None:
     assert "provider_status" in data
 
 
+def test_create_app_uses_default_config_when_default_file_is_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/route",
+        json={"task": "summarize this document", "private": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == DEFAULT_CONFIG.providers.local.default
+
+
 def test_chat_completions_uses_local_provider() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
@@ -261,6 +279,31 @@ def test_chat_completions_uses_local_provider() -> None:
     assert data["trace"]["summary"]["headline"].startswith("Stayed local")
     assert data["trace"]["summary"]["provider"] == "ollama"
     assert "verification" in data["trace"]["summary"]
+
+
+def test_chat_completions_uses_agent_role_model() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": FakeProvider()},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Implement a router test"}],
+            "model": "route-auto",
+            "agent_role": "coding",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["model"] == "devstral:latest"
+    assert data["route"]["agent_role"] == "coding"
+    assert data["trace"]["summary"]["agent_role"] == "coding"
 
 
 def test_chat_completions_emits_route_trace_to_configured_tracer() -> None:
@@ -1020,10 +1063,19 @@ def test_models_endpoint_lists_route_auto_and_configured_models() -> None:
     assert DEFAULT_CONFIG.providers.cloud.openai_compatible.model in model_ids
     assert DEFAULT_CONFIG.providers.local.ollama.embedding_model in model_ids
     assert DEFAULT_CONFIG.providers.cloud.openai_compatible.embedding_model in model_ids
+    assert DEFAULT_CONFIG.agents.roles["coding"].model in model_ids
+    assert DEFAULT_CONFIG.agents.roles["vision"].model in model_ids
     route_auto = next(
         item for item in response.json()["data"] if item["id"] == "route-auto"
     )
     assert route_auto["source"] == "virtual"
+    coding_model = next(
+        item
+        for item in response.json()["data"]
+        if item["id"] == DEFAULT_CONFIG.agents.roles["coding"].model
+    )
+    assert coding_model["source"] == "agent_role:coding"
+    assert coding_model["provider"] == "ollama"
 
 
 def test_models_endpoint_merges_live_ollama_inventory(monkeypatch) -> None:
@@ -1037,6 +1089,7 @@ def test_models_endpoint_merges_live_ollama_inventory(monkeypatch) -> None:
         "_ollama_model_inventory",
         lambda: [
             {"id": DEFAULT_CONFIG.providers.local.ollama.model, "size_bytes": 123},
+            {"id": DEFAULT_CONFIG.agents.roles["coding"].model, "size_bytes": 789},
             {"id": "mistral:7b", "size_bytes": 456},
         ],
     )
@@ -1050,6 +1103,11 @@ def test_models_endpoint_merges_live_ollama_inventory(monkeypatch) -> None:
     qwen = next(item for item in data if item["id"] == DEFAULT_CONFIG.providers.local.ollama.model)
     assert qwen["installed"] is True
     assert qwen["size_bytes"] == 123
+    coding_model = next(
+        item for item in data if item["id"] == DEFAULT_CONFIG.agents.roles["coding"].model
+    )
+    assert coding_model["installed"] is True
+    assert coding_model["size_bytes"] == 789
     mistral = next(item for item in data if item["id"] == "mistral:7b")
     assert mistral["source"] == "installed"
 

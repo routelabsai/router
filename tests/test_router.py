@@ -34,6 +34,31 @@ def test_high_complexity_defaults_to_cloud() -> None:
     assert decision.verify is True
 
 
+def test_agent_role_selects_configured_model() -> None:
+    engine = RouterEngine(DEFAULT_CONFIG)
+    decision = engine.decide(
+        RouteRequest(task="Implement the parser fix", agent_role="coding")
+    )
+
+    assert decision.target == "local"
+    assert decision.provider == "ollama"
+    assert decision.model == "devstral:latest"
+    assert decision.agent_role == "coding"
+    assert "agent role 'coding'" in decision.reason
+
+
+def test_unknown_agent_role_falls_back_to_default_routing() -> None:
+    engine = RouterEngine(DEFAULT_CONFIG)
+    decision = engine.decide(
+        RouteRequest(task="Implement the parser fix", agent_role="unknown")
+    )
+
+    assert decision.target == "local"
+    assert decision.provider == "ollama"
+    assert decision.model == DEFAULT_CONFIG.providers.local.ollama.model
+    assert decision.agent_role is None
+
+
 def test_analyze_agent_tools_detects_mcp_and_approval_risk() -> None:
     trace = analyze_agent_tools(
         task="Use the repo tool to edit a file",

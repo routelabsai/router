@@ -40,9 +40,12 @@ The GitHub Actions workflow lives at:
 
 It:
 
-1. builds `sdist` and `wheel`
-2. uploads those build artifacts between jobs
-3. publishes to PyPI using `pypa/gh-action-pypi-publish@release/v1`
+1. installs test dependencies
+2. runs `pytest`
+3. runs `python scripts/release_smoke.py`
+4. builds `sdist` and `wheel`
+5. uploads those build artifacts between jobs
+6. publishes to PyPI using `pypa/gh-action-pypi-publish@release/v1`
 
 ## How to release
 

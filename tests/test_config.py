@@ -138,6 +138,32 @@ def test_load_config_reads_cloud_budget(tmp_path: Path) -> None:
     assert config.telemetry.cloud_budget_usd == 0.05
 
 
+def test_load_config_reads_agent_roles(tmp_path: Path) -> None:
+    config_path = tmp_path / "router.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "agents": {
+                    "roles": {
+                        "coding": {
+                            "target": "local",
+                            "provider": "ollama",
+                            "model": "devstral:latest",
+                            "verify": True,
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.agents.roles["coding"].model == "devstral:latest"
+    assert config.agents.roles["planner"].model == "gemma3:4b"
+
+
 def test_load_config_allows_no_key_openai_compatible_proxy(tmp_path: Path) -> None:
     config_path = tmp_path / "router.yaml"
     config_path.write_text(
@@ -161,3 +187,20 @@ def test_load_config_allows_no_key_openai_compatible_proxy(tmp_path: Path) -> No
     assert config.providers.cloud.openai_compatible.base_url == "http://127.0.0.1:4000/v1"
     assert config.providers.cloud.openai_compatible.requires_api_key is False
     assert config.providers.cloud.openai_compatible.api_key is None
+
+
+def test_packaged_profiles_match_source_profiles() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    source_profiles = repo_root / "config" / "profiles"
+    packaged_profiles = repo_root / "src" / "routelabs_router" / "profiles"
+
+    source_files = sorted(path.name for path in source_profiles.glob("*.yaml"))
+    packaged_files = sorted(path.name for path in packaged_profiles.glob("*.yaml"))
+
+    assert packaged_files == source_files
+    for filename in source_files:
+        assert (
+            packaged_profiles / filename
+        ).read_text(encoding="utf-8") == (
+            source_profiles / filename
+        ).read_text(encoding="utf-8")

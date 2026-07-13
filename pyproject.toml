@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.4.0"
 description = "Local-first OpenAI-compatible and Anthropic-compatible runtime for hybrid LLM routing, verification-aware escalation, and privacy-aware local execution."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["llm", "routing", "local-ai", "ollama", "fastapi", "agentic-ai", "openai-compatible", "privacy", "agents"]
 authors = [
   { name = "Sai Sandeep Kantareddy", email = "saisandeep.kantareddy@gmail.com" }
@@ -16,7 +17,6 @@ authors = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -54,3 +54,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+routelabs_router = ["profiles/*.yaml"]
