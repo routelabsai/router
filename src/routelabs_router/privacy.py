@@ -10,6 +10,9 @@ CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,16}\b")
 SECRET_RE = re.compile(
     r"\b(?:sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z\-_]{20,})\b"
 )
+ENV_SECRET_RE = re.compile(
+    r"\b[A-Z][A-Z0-9_]{2,}(?:API_KEY|TOKEN|SECRET|PASSWORD)\s*=\s*[^\s,;]+"
+)
 
 CODE_SIGNALS = [
     "def ",
@@ -69,3 +72,40 @@ class HeuristicPrivacyDetector:
             reasons=reasons,
             forced_local=detected,
         )
+
+
+class RedactionResult:
+    def __init__(self, text: str, categories: list[str], replacement_count: int) -> None:
+        self.text = text
+        self.categories = categories
+        self.replacement_count = replacement_count
+
+    @property
+    def applied(self) -> bool:
+        return self.replacement_count > 0
+
+
+def redact_sensitive_text(text: str) -> RedactionResult:
+    redacted = text
+    categories: list[str] = []
+    replacement_count = 0
+
+    for category, pattern, replacement in [
+        ("private_email", EMAIL_RE, "[REDACTED_EMAIL]"),
+        ("private_identifier", SSN_RE, "[REDACTED_IDENTIFIER]"),
+        ("payment_card", CARD_RE, "[REDACTED_CARD]"),
+        ("private_phone", PHONE_RE, "[REDACTED_PHONE]"),
+        ("secret", ENV_SECRET_RE, "[REDACTED_SECRET]"),
+        ("secret", SECRET_RE, "[REDACTED_SECRET]"),
+    ]:
+        redacted, count = pattern.subn(replacement, redacted)
+        if count:
+            replacement_count += count
+            if category not in categories:
+                categories.append(category)
+
+    return RedactionResult(
+        text=redacted,
+        categories=categories,
+        replacement_count=replacement_count,
+    )

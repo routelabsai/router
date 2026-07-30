@@ -35,6 +35,7 @@ from routelabs_router.models import (
     ProviderEmbeddingResult,
     ProviderResult,
     ProviderAttempt,
+    RedactionTrace,
     ResponsesFunctionCall,
     ResponsesOutputMessage,
     ResponsesOutputText,
@@ -45,7 +46,8 @@ from routelabs_router.models import (
     RouteRequest,
 )
 from routelabs_router.observability import OpenTelemetryRouteTracer
-from routelabs_router.privacy import HeuristicPrivacyDetector
+from routelabs_router.policy import LocalPolicyEngine
+from routelabs_router.privacy import HeuristicPrivacyDetector, redact_sensitive_text
 from routelabs_router.router import RouterEngine
 from routelabs_router.telemetry import InMemoryTelemetry
 from routelabs_router.verify import HeuristicVerifier
@@ -60,14 +62,27 @@ class ChatService:
         verifier: HeuristicVerifier | None = None,
         telemetry: InMemoryTelemetry | None = None,
         privacy_detector: HeuristicPrivacyDetector | None = None,
+        policy_engine: LocalPolicyEngine | None = None,
         route_tracer: OpenTelemetryRouteTracer | None = None,
     ) -> None:
         self.config = config
-        self.router = router or RouterEngine(config)
+        if policy_engine is None and privacy_detector is not None:
+            policy_engine = LocalPolicyEngine(
+                config,
+                privacy_detector=privacy_detector,
+            )
+        self.policy_engine = (
+            policy_engine
+            or getattr(router, "policy_engine", None)
+            or LocalPolicyEngine(config, privacy_detector=privacy_detector)
+        )
+        if router is not None:
+            router.policy_engine = self.policy_engine
+        self.router = router or RouterEngine(config, policy_engine=self.policy_engine)
         self.providers = providers or self._default_providers()
         self.verifier = verifier or HeuristicVerifier()
         self.telemetry = telemetry or InMemoryTelemetry(config.telemetry.costs)
-        self.privacy_detector = privacy_detector or HeuristicPrivacyDetector()
+        self.privacy_detector = self.policy_engine.privacy_detector
         self.route_tracer = route_tracer or OpenTelemetryRouteTracer(
             config.telemetry.opentelemetry
         )
@@ -78,7 +93,11 @@ class ChatService:
         started = time.perf_counter()
         request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         task = _task_from_messages(request)
-        privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
+        preflight = self.policy_engine.evaluate(
+            task,
+            explicitly_private=request.private,
+        )
+        privacy = preflight.privacy
         effective_private = request.private or privacy.forced_local
         initial_route = self.router.decide(
             _route_request_from_chat(request, task, effective_private)
@@ -111,7 +130,11 @@ class ChatService:
             )
             trace.verification = verification
 
-            if verification.should_escalate and request.allow_fallbacks:
+            if (
+                verification.should_escalate
+                and request.allow_fallbacks
+                and not effective_private
+            ):
                 cloud_route = self._cloud_route(
                     initial_route.complexity,
                     agent_tools=trace.agent_tools,
@@ -135,9 +158,15 @@ class ChatService:
                         f"{exc.detail}"
                     )
             elif verification.should_escalate:
-                trace.escalation_reason = (
-                    "verification requested escalation but request disabled fallbacks"
-                )
+                if effective_private:
+                    trace.escalation_reason = (
+                        "verification requested escalation but privacy policy forced "
+                        "local execution"
+                    )
+                else:
+                    trace.escalation_reason = (
+                        "verification requested escalation but request disabled fallbacks"
+                    )
 
         response = _build_chat_response(
             request_id=request_id,
@@ -210,6 +239,8 @@ class ChatService:
             provider_status=status,
             fallback_available=fallback_available,
             fallback_status=fallback_status,
+            policy_engine=self.policy_engine.name,
+            policy_engine_status=self.policy_engine.readiness()[1],
         )
         return RouteDecision(**payload)
 
@@ -217,7 +248,11 @@ class ChatService:
         started = time.perf_counter()
         request_id = f"embd-{uuid.uuid4().hex[:24]}"
         task = _task_from_embedding_input(request.input)
-        privacy = self.privacy_detector.evaluate(task, explicitly_private=request.private)
+        preflight = self.policy_engine.evaluate(
+            task,
+            explicitly_private=request.private,
+        )
+        privacy = preflight.privacy
         effective_private = request.private or privacy.forced_local
         route = self.router.decide(
             RouteRequest(
@@ -225,6 +260,7 @@ class ChatService:
                 private=effective_private,
                 allow_fallbacks=request.allow_fallbacks,
                 max_cloud_cost_usd=request.max_cloud_cost_usd,
+                strip_pii=request.strip_pii,
             )
         )
         requested_model = _requested_model_override(request.model)
@@ -517,7 +553,12 @@ class ChatService:
         return None, "unknown", None
 
     def health(self) -> HealthResponse:
+        policy_available, policy_status = self.policy_engine.readiness()
         providers = {
+            "policy-engine": ProviderHealth(
+                available=policy_available,
+                status=policy_status,
+            ),
             self.config.providers.local.default: self._provider_health(
                 self.config.providers.local.default
             ),
@@ -534,10 +575,20 @@ class ChatService:
             status = "ok"
         elif cloud_available:
             status = "degraded"
+        elif policy_available:
+            status = "degraded"
         else:
             status = "error"
 
-        return HealthResponse(status=status, providers=providers)
+        return HealthResponse(
+            status=status,
+            providers=providers,
+            routing_available=policy_available,
+            policy_engine=ProviderHealth(
+                available=policy_available,
+                status=policy_status,
+            ),
+        )
 
     def _default_providers(self) -> dict[str, ChatProvider]:
         providers: dict[str, ChatProvider] = {
@@ -693,10 +744,16 @@ class ChatService:
         model_name = requested_model or self._provider_embedding_model(route.provider)
         retries = max(1, self._provider_retries(route.provider))
         last_error: str | None = None
+        provider_request = _embedding_request_for_route_with_redaction(
+            request=request,
+            route=route,
+            trace=trace,
+            strip_pii=self._should_strip_pii_for_cloud(request.strip_pii),
+        )
         for attempt_number in range(1, retries + 1):
             attempt_started = time.perf_counter()
             try:
-                result = provider.embed(request, model=model_name)
+                result = provider.embed(provider_request, model=model_name)
                 trace.attempts.append(
                     ProviderAttempt(
                         provider=route.provider,
@@ -788,10 +845,16 @@ class ChatService:
         model_name = requested_model or route.model
         retries = max(1, self._provider_retries(route.provider))
         last_error: str | None = None
+        provider_request = _chat_request_for_route_with_redaction(
+            request=request,
+            route=route,
+            trace=trace,
+            strip_pii=self._should_strip_pii_for_cloud(request.strip_pii),
+        )
         for attempt_number in range(1, retries + 1):
             attempt_started = time.perf_counter()
             try:
-                result = provider.complete(request, model=model_name)
+                result = provider.complete(provider_request, model=model_name)
                 _validate_structured_output(
                     result=result,
                     response_format=request.response_format,
@@ -836,6 +899,11 @@ class ChatService:
         if provider_name == "anthropic":
             return self.config.providers.cloud.anthropic.max_retries
         return 1
+
+    def _should_strip_pii_for_cloud(self, request_override: bool | None) -> bool:
+        if request_override is not None:
+            return request_override
+        return self.config.policies.privacy.scrub_before_cloud
 
     def _provider_embedding_model(self, provider_name: str) -> str:
         if provider_name == "ollama":
@@ -1007,11 +1075,148 @@ def _route_request_from_chat(
         private=private,
         allow_fallbacks=request.allow_fallbacks,
         max_cloud_cost_usd=request.max_cloud_cost_usd,
+        strip_pii=request.strip_pii,
         tool_names=tool_names,
         tool_descriptions=_tool_descriptions_from_tools(request.tools),
         tool_count=len(request.tools or []),
         tool_choice=request.tool_choice,
         agent_role=request.agent_role,
+    )
+
+
+def _chat_request_for_route_with_redaction(
+    request: ChatCompletionRequest,
+    route: RouteDecision,
+    trace: DecisionTrace,
+    strip_pii: bool,
+) -> ChatCompletionRequest:
+    if route.target != "cloud" or not strip_pii:
+        return request
+
+    replacement_count = 0
+    categories: list[str] = []
+    messages: list[ChatMessage] = []
+    for message in request.messages:
+        content = message.content
+        if content is not None:
+            redacted = redact_sensitive_text(content)
+            content = redacted.text
+            replacement_count += redacted.replacement_count
+            categories = _merge_categories(categories, redacted.categories)
+        tool_calls = _redact_json_strings(message.tool_calls, categories)
+        categories = _merge_categories(categories, tool_calls[1])
+        replacement_count += tool_calls[2]
+        messages.append(
+            message.model_copy(
+                update={
+                    "content": content,
+                    "tool_calls": tool_calls[0],
+                }
+            )
+        )
+
+    tools, tool_categories, tool_replacements = _redact_json_strings(
+        request.tools,
+        categories,
+    )
+    categories = _merge_categories(categories, tool_categories)
+    replacement_count += tool_replacements
+
+    _record_redaction_trace(
+        trace=trace,
+        categories=categories,
+        replacement_count=replacement_count,
+    )
+    if replacement_count == 0:
+        return request
+
+    return request.model_copy(update={"messages": messages, "tools": tools})
+
+
+def _embedding_request_for_route_with_redaction(
+    request: EmbeddingsRequest,
+    route: RouteDecision,
+    trace: DecisionTrace,
+    strip_pii: bool,
+) -> EmbeddingsRequest:
+    if route.target != "cloud" or not strip_pii:
+        return request
+
+    inputs = request.input if isinstance(request.input, list) else [request.input]
+    redacted_inputs: list[str] = []
+    categories: list[str] = []
+    replacement_count = 0
+    for item in inputs:
+        redacted = redact_sensitive_text(item)
+        redacted_inputs.append(redacted.text)
+        categories = _merge_categories(categories, redacted.categories)
+        replacement_count += redacted.replacement_count
+
+    _record_redaction_trace(
+        trace=trace,
+        categories=categories,
+        replacement_count=replacement_count,
+    )
+    if replacement_count == 0:
+        return request
+
+    redacted_value = (
+        redacted_inputs if isinstance(request.input, list) else redacted_inputs[0]
+    )
+    return request.model_copy(update={"input": redacted_value})
+
+
+def _redact_json_strings(
+    value: object,
+    existing_categories: list[str],
+) -> tuple[object, list[str], int]:
+    categories = list(existing_categories)
+    replacement_count = 0
+
+    if isinstance(value, str):
+        redacted = redact_sensitive_text(value)
+        categories = _merge_categories(categories, redacted.categories)
+        return redacted.text, categories, redacted.replacement_count
+
+    if isinstance(value, list):
+        redacted_items: list[object] = []
+        for item in value:
+            redacted_item, categories, count = _redact_json_strings(item, categories)
+            redacted_items.append(redacted_item)
+            replacement_count += count
+        return redacted_items, categories, replacement_count
+
+    if isinstance(value, dict):
+        redacted_dict: dict[object, object] = {}
+        for key, item in value.items():
+            redacted_item, categories, count = _redact_json_strings(item, categories)
+            redacted_dict[key] = redacted_item
+            replacement_count += count
+        return redacted_dict, categories, replacement_count
+
+    return value, categories, 0
+
+
+def _merge_categories(existing: list[str], new_categories: list[str]) -> list[str]:
+    merged = list(existing)
+    for category in new_categories:
+        if category not in merged:
+            merged.append(category)
+    return merged
+
+
+def _record_redaction_trace(
+    trace: DecisionTrace,
+    categories: list[str],
+    replacement_count: int,
+) -> None:
+    if replacement_count <= 0:
+        return
+    trace.redaction = RedactionTrace(
+        applied=True,
+        categories=categories,
+        replacement_count=replacement_count,
+        reason="scrubbed sensitive text before cloud execution",
     )
 
 
@@ -1251,6 +1456,7 @@ def _responses_request_to_chat_request(
         private=request.private,
         allow_fallbacks=request.allow_fallbacks,
         max_cloud_cost_usd=request.max_cloud_cost_usd,
+        strip_pii=request.strip_pii,
         stream=request.stream,
         response_format=response_format,
         tools=request.tools,
@@ -1282,6 +1488,7 @@ def _anthropic_request_to_chat_request(
         private=request.private,
         allow_fallbacks=request.allow_fallbacks,
         max_cloud_cost_usd=request.max_cloud_cost_usd,
+        strip_pii=request.strip_pii,
         stream=request.stream,
         tools=_map_anthropic_tools_to_openai(request.tools),
         tool_choice=_map_anthropic_tool_choice_to_openai(request.tool_choice),

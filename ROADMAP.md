@@ -55,6 +55,7 @@ Current status:
 - per-request fallback disablement implemented with `allow_fallbacks`
 - per-request cloud cost cap implemented with `max_cloud_cost_usd`
 - local machine model recommendation implemented for Ollama setup
+- deterministic local policy preflight implemented for zero-runtime route inspection
 - heuristic privacy-aware local preference implemented
 - recent request-level logs implemented
 - optional OpenTelemetry-compatible route spans implemented

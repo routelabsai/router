@@ -62,6 +62,24 @@ class FakeCloudProvider:
         )
 
 
+class CapturingCloudProvider(FakeCloudProvider):
+    def __init__(self) -> None:
+        self.chat_requests: list[ChatCompletionRequest] = []
+        self.embedding_requests: list[EmbeddingsRequest] = []
+
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        self.chat_requests.append(request)
+        return super().complete(request, model=model)
+
+    def embed(
+        self, request: EmbeddingsRequest, model: str | None = None
+    ) -> ProviderEmbeddingResult:
+        self.embedding_requests.append(request)
+        return super().embed(request, model=model)
+
+
 class FakeAnthropicCloudProvider:
     def complete(
         self, request: ChatCompletionRequest, model: str | None = None
@@ -234,6 +252,8 @@ def test_route_endpoint_returns_provider_metadata() -> None:
     assert data["provider"] == "ollama"
     assert "provider_available" in data
     assert "provider_status" in data
+    assert data["policy_engine"] == "local-heuristic"
+    assert data["policy_engine_status"] == "ready"
 
 
 def test_create_app_uses_default_config_when_default_file_is_missing(
@@ -824,6 +844,118 @@ def test_chat_completions_can_fall_back_to_anthropic_cloud_provider() -> None:
     assert data["trace"]["summary"]["verification"] == "failed_escalated"
 
 
+def test_chat_completions_scrubs_sensitive_context_before_cloud_escalation() -> None:
+    cloud = CapturingCloudProvider()
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": WeakLocalProvider(), "openai-compatible": cloud},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Customer alice@example.com has phone 312-555-0199 "
+                        "and token sk-abcdef1234567890secret."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": "design architecture for a multi-step support agent",
+                },
+            ],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(cloud.chat_requests) == 1
+    cloud_system_prompt = cloud.chat_requests[0].messages[0].content
+    assert "alice@example.com" not in cloud_system_prompt
+    assert "312-555-0199" not in cloud_system_prompt
+    assert "sk-abcdef1234567890secret" not in cloud_system_prompt
+    assert "[REDACTED_EMAIL]" in cloud_system_prompt
+    data = response.json()
+    assert data["trace"]["redaction"]["applied"] is True
+    assert data["trace"]["redaction"]["replacement_count"] == 3
+    assert set(data["trace"]["redaction"]["categories"]) == {
+        "private_email",
+        "private_phone",
+        "secret",
+    }
+
+
+def test_chat_completions_can_disable_cloud_scrubbing_per_request() -> None:
+    cloud = CapturingCloudProvider()
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": WeakLocalProvider(), "openai-compatible": cloud},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {"role": "system", "content": "Contact alice@example.com."},
+                {
+                    "role": "user",
+                    "content": "design architecture for a multi-step support agent",
+                },
+            ],
+            "strip_pii": False,
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert cloud.chat_requests[0].messages[0].content == "Contact alice@example.com."
+    assert response.json()["trace"].get("redaction") is None
+
+
+def test_chat_completions_does_not_cloud_escalate_auto_private_content() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={
+            "ollama": WeakLocalProvider(),
+            "openai-compatible": FakeCloudProvider(),
+        },
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "design architecture for a multi-step support workflow "
+                        "for alice@example.com"
+                    ),
+                }
+            ],
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["route"]["provider"] == "ollama"
+    assert data["trace"]["privacy"]["detected"] is True
+    assert "privacy policy forced local execution" in data["trace"]["escalation_reason"]
+
+
 def test_chat_completions_fall_back_to_cloud_when_local_structured_output_is_invalid() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
@@ -1233,7 +1365,7 @@ def test_healthz_reports_openai_compatible_proxy_available_without_api_key() -> 
     assert data["providers"]["openai-compatible"]["status"] == "configured"
 
 
-def test_healthz_reports_error_when_no_provider_is_available() -> None:
+def test_healthz_reports_degraded_when_only_policy_engine_is_available() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
         router=RouterEngine(DEFAULT_CONFIG),
@@ -1246,9 +1378,38 @@ def test_healthz_reports_error_when_no_provider_is_available() -> None:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "error"
+    assert data["status"] == "degraded"
+    assert data["routing_available"] is True
+    assert data["policy_engine"]["available"] is True
+    assert data["providers"]["policy-engine"]["status"] == "ready"
     assert data["providers"]["ollama"]["available"] is False
     assert data["providers"]["openai-compatible"]["available"] is False
+
+
+def test_route_endpoint_works_without_model_providers() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={},
+    )
+    app = create_app(service=service)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/route",
+        json={
+            "task": "Summarize the update for alice@example.com",
+            "private": False,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider_available"] is False
+    assert data["provider_status"] == "unreachable"
+    assert data["policy_engine"] == "local-heuristic"
+    assert data["policy_engine_status"] == "ready"
+    assert "privacy policy" in data["reason"]
 
 
 def test_chat_completions_treats_route_auto_as_router_selected_model() -> None:

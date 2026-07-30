@@ -70,6 +70,8 @@ Today the repository supports:
 - OpenAI-compatible proxy execution for LiteLLM-style gateways, including
   no-key local proxy mode
 - Anthropic Messages-compatible cloud execution
+- deterministic local policy preflight for privacy detection and complexity
+  scoring without requiring a model runtime
 - heuristic verification and escalation traces
 - simple estimated cost accounting
 - heuristic privacy detection
@@ -77,7 +79,10 @@ Today the repository supports:
 The current execution behavior is intentionally conservative but now genuinely hybrid:
 
 - `/healthz` reports whether the system is healthy, degraded, or unusable based on live provider readiness
-- `/v1/route` is a planning endpoint that now includes provider availability and fallback availability metadata
+- `/healthz` also reports policy-engine readiness; routing can be available
+  even when model execution providers are not ready
+- `/v1/route` is a planning endpoint that now includes provider availability,
+  fallback availability, and policy-engine metadata
 - Python client helpers can pass `agent_role` through route, chat, responses, and messages calls
 - local routes execute through `Ollama` by default, or through a configured
   OpenAI-compatible local runtime
@@ -102,9 +107,12 @@ The current execution behavior is intentionally conservative but now genuinely h
   escalation without marking the request private
 - per-request `max_cloud_cost_usd` blocks cloud fallback or escalation when the
   configured cloud request cost exceeds the request cap
+- `policies.privacy.scrub_before_cloud` redacts obvious PII and secrets from
+  the cloud-bound request copy while preserving the original local request
 - optional OpenTelemetry-compatible spans export route, provider, privacy,
   verification, tool-risk, and decision-summary attributes
-- heuristic privacy detection can force local execution for obvious sensitive or code-like content
+- heuristic privacy detection can force local execution for obvious sensitive
+  or code-like content
 - recent route logs expose per-request trace data for debugging and trust
 - CLI doctor and model-inventory commands surface readiness and model visibility before requests are sent
 - CLI local model recommendations inspect CPU, RAM, and basic GPU signals to

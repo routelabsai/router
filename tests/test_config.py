@@ -30,6 +30,41 @@ def test_load_config_deep_merges_nested_values(tmp_path: Path) -> None:
     assert config.providers.local.llamacpp.base_url == "http://127.0.0.1:8080/v1"
     assert config.telemetry.cloud_budget_usd is None
     assert config.telemetry.opentelemetry.enabled is False
+    assert config.policies.privacy.scrub_before_cloud is True
+    assert config.policies.engine == "local-heuristic"
+
+
+def test_load_config_reads_privacy_scrubber_setting(tmp_path: Path) -> None:
+    config_path = tmp_path / "router.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "policies": {
+                    "privacy": {
+                        "scrub_before_cloud": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.policies.privacy.deny_cloud_when_private is True
+    assert config.policies.privacy.scrub_before_cloud is False
+
+
+def test_load_config_reads_policy_engine_setting(tmp_path: Path) -> None:
+    config_path = tmp_path / "router.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"policies": {"engine": "local-heuristic"}}),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.policies.engine == "local-heuristic"
 
 
 def test_load_config_reads_cloud_api_key_from_environment(

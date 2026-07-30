@@ -59,6 +59,7 @@ class AgentRoutingConfig(BaseModel):
 
 class PrivacyPolicyConfig(BaseModel):
     deny_cloud_when_private: bool
+    scrub_before_cloud: bool = True
 
 
 class ComplexityPolicyConfig(BaseModel):
@@ -75,6 +76,7 @@ class PoliciesConfig(BaseModel):
     privacy: PrivacyPolicyConfig
     complexity: ComplexityPolicyConfig
     tools: ToolPolicyConfig
+    engine: str = "local-heuristic"
 
 
 DEFAULT_TOOL_APPROVAL_REQUIRED_PATTERNS = [
@@ -221,13 +223,17 @@ DEFAULT_CONFIG = Config.model_validate(
             },
         },
         "policies": {
-            "privacy": {"deny_cloud_when_private": True},
+            "privacy": {
+                "deny_cloud_when_private": True,
+                "scrub_before_cloud": True,
+            },
             "complexity": {"local_max": "medium"},
             "tools": {
                 "approval_required_patterns": DEFAULT_TOOL_APPROVAL_REQUIRED_PATTERNS,
                 "review_recommended_patterns": DEFAULT_TOOL_REVIEW_RECOMMENDED_PATTERNS,
                 "trusted_tool_patterns": [],
             },
+            "engine": "local-heuristic",
         },
         "telemetry": {
             "cloud_budget_usd": None,

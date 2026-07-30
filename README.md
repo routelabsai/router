@@ -427,7 +427,9 @@ This is an early but usable product foundation. The repository already includes:
 - runtime doctor and model inventory CLI commands
 - simple estimated cost savings in stats
 - latency and token-speed metrics in stats and logs
+- zero-setup local policy preflight for route inspection without a model runtime
 - heuristic privacy detection for email/identifier/code-like content
+- optional PII/secret scrubbing before cloud fallback or escalation
 - recent route logs for per-request inspection
 - test coverage for routing and API behavior
 - example config profiles
@@ -784,6 +786,34 @@ Per-request cloud cost cap:
 When `max_cloud_cost_usd` is set, RouteLabs blocks cloud fallback or escalation
 if the configured estimated cloud request cost is higher than the request cap.
 `/v1/route` reports cloud fallback as `max_cloud_cost_exceeded`.
+
+Cloud redaction guardrail:
+
+```yaml
+policies:
+  privacy:
+    deny_cloud_when_private: true
+    scrub_before_cloud: true
+```
+
+When enabled, RouteLabs redacts obvious emails, phone numbers, identifiers,
+card-like numbers, and common secret tokens from the copy of a request sent to
+cloud fallback or verification escalation. Local execution still receives the
+original request. A request can override this with `"strip_pii": false`, and
+the trace reports redaction categories and replacement counts without exposing
+the original values.
+
+Zero-setup route inspection:
+
+```bash
+router route --task "Summarize the account update for alice@example.com"
+```
+
+RouteLabs runs a deterministic local policy preflight before any model call.
+That preflight estimates complexity, detects obvious privacy signals, and
+adds `policy_engine` readiness metadata to the route decision. It works even
+when `Ollama` is not running and no cloud key is configured, so first-run users
+can inspect routing behavior before they have an execution backend ready.
 
 Optional OpenTelemetry export:
 

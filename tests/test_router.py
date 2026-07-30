@@ -24,6 +24,19 @@ def test_private_requests_prefer_local() -> None:
     decision = engine.decide(RouteRequest(task="research strategy", private=True))
     assert decision.target == "local"
     assert decision.provider == "ollama"
+    assert decision.policy_engine == "local-heuristic"
+
+
+def test_policy_engine_auto_private_requests_prefer_local() -> None:
+    engine = RouterEngine(DEFAULT_CONFIG)
+    decision = engine.decide(
+        RouteRequest(task="Summarize account update for alice@example.com")
+    )
+
+    assert decision.target == "local"
+    assert decision.provider == "ollama"
+    assert "privacy policy" in decision.reason
+    assert decision.policy_engine_status == "ready"
 
 
 def test_high_complexity_defaults_to_cloud() -> None:

@@ -248,6 +248,7 @@ def _print_startup_status(config) -> None:
     health = service.health()
 
     print(f"RouteLabs status: {health.status}")
+    print(f"Policy engine: {health.policy_engine.status}")
 
     local_name = config.providers.local.default
     cloud_name = config.providers.cloud.default
@@ -289,6 +290,7 @@ def _print_doctor_report(service: ChatService, config) -> None:
     health = service.health()
     print("RouteLabs Doctor")
     print(f"Status: {health.status}")
+    print(f"Policy engine: {health.policy_engine.status}")
 
     local_name = config.providers.local.default
     cloud_name = config.providers.cloud.default
@@ -352,6 +354,8 @@ def _print_route_decision(decision) -> None:
     print(f"reason: {decision.reason}")
     print(f"complexity: {decision.complexity}")
     print(f"verify: {decision.verify}")
+    print(f"policy_engine: {decision.policy_engine}")
+    print(f"policy_engine_status: {decision.policy_engine_status}")
     if decision.agent_role is not None:
         print(f"agent_role: {decision.agent_role}")
     if decision.provider_available is not None:

@@ -35,8 +35,10 @@ providers:
       max_retries: 2
 
 policies:
+  engine: "local-heuristic"
   privacy:
     deny_cloud_when_private: true
+    scrub_before_cloud: true
   complexity:
     local_max: "medium"
   tools:

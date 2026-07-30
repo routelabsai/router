@@ -128,6 +128,8 @@ def test_route_command_prints_readiness_and_agent_tool_trace(
     }
     assert request.tool_choice == "required"
     assert "provider_available: True" in output
+    assert "policy_engine: local-heuristic" in output
+    assert "policy_engine_status: ready" in output
     assert "agent_role: planner" in output
     assert "fallback_status: disabled_by_request" in output
     assert "agent_tools:" in output

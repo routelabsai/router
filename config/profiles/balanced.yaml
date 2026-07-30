@@ -21,8 +21,10 @@ providers:
       api_key_env: "OPENAI_API_KEY"
 
 policies:
+  engine: "local-heuristic"
   privacy:
     deny_cloud_when_private: true
+    scrub_before_cloud: true
   complexity:
     local_max: "medium"
 

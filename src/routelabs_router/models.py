@@ -9,6 +9,7 @@ class RouteRequest(BaseModel):
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
+    strip_pii: bool | None = None
     tool_names: list[str] = Field(default_factory=list)
     tool_descriptions: dict[str, str] = Field(default_factory=dict)
     tool_count: int | None = None
@@ -41,6 +42,8 @@ class RouteDecision(BaseModel):
     provider_status: str | None = None
     fallback_available: bool | None = None
     fallback_status: str | None = None
+    policy_engine: str = "local-heuristic"
+    policy_engine_status: str = "ready"
     agent_tools: AgentToolTrace | None = None
 
 
@@ -60,6 +63,7 @@ class ChatCompletionRequest(BaseModel):
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
+    strip_pii: bool | None = None
     stream: bool = False
     response_format: dict[str, Any] | None = None
     tools: list[dict[str, Any]] | None = None
@@ -85,6 +89,7 @@ class ResponsesRequest(BaseModel):
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
+    strip_pii: bool | None = None
     stream: bool = False
     text: ResponsesTextConfig | None = None
     tools: list[dict[str, Any]] | None = None
@@ -104,6 +109,7 @@ class EmbeddingsRequest(BaseModel):
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
+    strip_pii: bool | None = None
 
 
 class EmbeddingObject(BaseModel):
@@ -201,6 +207,7 @@ class AnthropicMessagesRequest(BaseModel):
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
+    strip_pii: bool | None = None
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
     tool_choice: AnthropicToolChoice | dict[str, Any] | None = None
@@ -268,6 +275,13 @@ class ProviderAttempt(BaseModel):
     duration_ms: float | None = None
 
 
+class RedactionTrace(BaseModel):
+    applied: bool = False
+    categories: list[str] = Field(default_factory=list)
+    replacement_count: int = 0
+    reason: str | None = None
+
+
 class DecisionSummary(BaseModel):
     headline: str
     target: str
@@ -289,6 +303,7 @@ class DecisionTrace(BaseModel):
     verification: VerificationResult | None = None
     escalated: bool = False
     escalation_reason: str | None = None
+    redaction: RedactionTrace | None = None
     final_route: RouteDecision
     total_latency_ms: float | None = None
     completion_tokens_per_second: float | None = None
@@ -406,6 +421,10 @@ class ProviderHealth(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     providers: dict[str, ProviderHealth]
+    routing_available: bool = True
+    policy_engine: ProviderHealth = Field(
+        default_factory=lambda: ProviderHealth(available=True, status="ready")
+    )
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:
