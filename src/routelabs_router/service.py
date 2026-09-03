@@ -79,7 +79,7 @@ class ChatService:
         if router is not None:
             router.policy_engine = self.policy_engine
         self.router = router or RouterEngine(config, policy_engine=self.policy_engine)
-        self.providers = providers or self._default_providers()
+        self.providers = providers if providers is not None else self._default_providers()
         self.verifier = verifier or HeuristicVerifier()
         self.telemetry = telemetry or InMemoryTelemetry(config.telemetry.costs)
         self.privacy_detector = self.policy_engine.privacy_detector
@@ -215,10 +215,19 @@ class ChatService:
 
     def inspect_route(self, request: RouteRequest) -> RouteDecision:
         decision = self.router.decide(request)
-        available, status = self._provider_readiness(decision.provider)
-        fallback_available, fallback_status = self._provider_readiness(
-            self.config.providers.cloud.default
-        )
+
+        if decision.provider in self.providers:
+            available, status = self._provider_readiness(decision.provider)
+        else:
+            available, status = False, "unreachable"
+
+        cloud_provider = self.config.providers.cloud.default
+        if cloud_provider in self.providers:
+            fallback_available, fallback_status = self._provider_readiness(
+                cloud_provider
+            )
+        else:
+            fallback_available, fallback_status = False, "unreachable"
         if not request.allow_fallbacks:
             fallback_available = False
             fallback_status = "disabled_by_request"
@@ -554,20 +563,41 @@ class ChatService:
 
     def health(self) -> HealthResponse:
         policy_available, policy_status = self.policy_engine.readiness()
+
+        local_default = self.config.providers.local.default
+        cloud_default = self.config.providers.cloud.default
+
         providers = {
             "policy-engine": ProviderHealth(
                 available=policy_available,
                 status=policy_status,
             ),
-            self.config.providers.local.default: self._provider_health(
-                self.config.providers.local.default
-            ),
-            self.config.providers.cloud.default: self._provider_health(
-                self.config.providers.cloud.default
-            ),
         }
-        local_default = self.config.providers.local.default
-        cloud_default = self.config.providers.cloud.default
+
+        if local_default in self.providers:
+            providers[local_default] = self._provider_health(local_default)
+        else:
+            providers[local_default] = ProviderHealth(
+                available=False,
+                status="unavailable",
+            )
+
+        if cloud_default in self.providers:
+            providers[cloud_default] = self._provider_health(cloud_default)
+        elif (
+            cloud_default == "openai-compatible"
+            and self._openai_compatible_cloud_configured()
+        ):
+            providers[cloud_default] = ProviderHealth(
+                available=True,
+                status="configured",
+            )
+        else:
+            providers[cloud_default] = ProviderHealth(
+                available=False,
+                status="unavailable",
+            )
+
         local_available = providers[local_default].available
         cloud_available = providers[cloud_default].available
 
