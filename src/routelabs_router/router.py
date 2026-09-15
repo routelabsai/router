@@ -221,21 +221,31 @@ def analyze_agent_tools(
     if _tool_choice_forces_tool(tool_choice):
         reasons.append("tool_choice requires tool use")
 
+    detected = bool(
+        names
+        or inferred_count
+        or mcp_like
+        or metadata_findings
+        or _tool_choice_forces_tool(tool_choice)
+    )
+
     approval_required_patterns = (
         approval_required_patterns or DEFAULT_APPROVAL_REQUIRED_PATTERNS
     )
     review_recommended_patterns = (
         review_recommended_patterns or DEFAULT_REVIEW_RECOMMENDED_PATTERNS
     )
-    high_signal = _first_policy_signal(
-        values=[*lowered_names, lowered_task],
-        patterns=approval_required_patterns,
-    )
+    high_signal = None
+    if detected:
+        high_signal = _first_policy_signal(
+            values=[*lowered_names, lowered_task],
+            patterns=approval_required_patterns,
+        )
     metadata_signal = metadata_findings[0][1] if metadata_findings else None
     if metadata_signal is not None:
         high_signal = f"tool_metadata:{metadata_signal}"
     review_signal = None
-    if high_signal is None:
+    if detected and high_signal is None:
         review_signal = _first_policy_signal(
             values=[*lowered_names, lowered_task],
             patterns=review_recommended_patterns,
@@ -250,13 +260,6 @@ def analyze_agent_tools(
         approval_reason = f"tool policy matched '{risky_signal}'"
         reasons.append(f"approval recommended by tool policy '{risky_signal}'")
 
-    detected = bool(
-        names
-        or inferred_count
-        or mcp_like
-        or metadata_findings
-        or _tool_choice_forces_tool(tool_choice)
-    )
     if detected and risk_level == "none":
         risk_level = "low"
 

@@ -80,6 +80,16 @@ def _run_smoke(repo_root: Path, python: Path, tmp_path: Path) -> None:
     _assert_contains(init_output, "Profile: qwen-agent-mesh")
     _assert_contains(output_config.read_text(encoding="utf-8"), "devstral:latest")
 
+    benchmark_output = _run(
+        [str(router), "benchmark", "--config", str(output_config)],
+        cwd=tmp_path,
+    ).stdout
+    _assert_contains(benchmark_output, "Cases passed: 8/8")
+    _assert_contains(
+        benchmark_output,
+        "This benchmark measures deterministic routing-policy expectations",
+    )
+
     import_output = _run(
         [
             str(venv_python),

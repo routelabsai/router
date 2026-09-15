@@ -56,4 +56,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-routelabs_router = ["profiles/*.yaml"]
+routelabs_router = ["profiles/*.yaml", "benchmarks/*.yaml"]

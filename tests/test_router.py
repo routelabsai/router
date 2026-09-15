@@ -88,6 +88,14 @@ def test_analyze_agent_tools_detects_mcp_and_approval_risk() -> None:
     assert trace.risk_level == "high"
 
 
+def test_action_words_without_tool_context_do_not_create_tool_risk() -> None:
+    trace = analyze_agent_tools(task="Write and edit a friendly customer reply")
+
+    assert trace.detected is False
+    assert trace.approval_required is False
+    assert trace.risk_level == "none"
+
+
 def test_tool_requests_start_local_with_agent_trace() -> None:
     engine = RouterEngine(DEFAULT_CONFIG)
     decision = engine.decide(

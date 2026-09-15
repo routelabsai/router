@@ -507,6 +507,21 @@ pytest
 python scripts/release_smoke.py
 ```
 
+### Benchmark routing policy offline
+
+Run the packaged deterministic benchmark without starting a model runtime or
+using API keys:
+
+```bash
+router benchmark --config ./config/router.yaml
+router benchmark --config ./config/router.yaml --json
+```
+
+The report measures labeled routing-policy expectations, local-routing rate,
+verification rate, and configured request-cost estimates against an
+always-cloud baseline. It deliberately does not claim to measure model answer
+quality. Pass `--dataset path/to/cases.yaml` to evaluate a custom workload.
+
 ### Optional profile configs
 
 The repo includes starter profiles in [`config/profiles/`](config/profiles):

@@ -59,6 +59,7 @@ Current status:
 - heuristic privacy-aware local preference implemented
 - recent request-level logs implemented
 - optional OpenTelemetry-compatible route spans implemented
+- deterministic offline policy-routing benchmark implemented with custom dataset support
 
 ## Phase 2: Verification and evaluation
 

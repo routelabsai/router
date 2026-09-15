@@ -1,4 +1,5 @@
 import argparse
+import json
 from importlib.resources import files
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import uvicorn
 import yaml
 
 from routelabs_router.config import DEFAULT_CONFIG, load_config
+from routelabs_router.benchmark import run_policy_benchmark
 from routelabs_router.hardware import detect_machine_profile, recommend_local_model
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
@@ -70,6 +72,22 @@ def main() -> None:
         "models", help="List configured and discovered models"
     )
     models_parser.add_argument("--config", default="./config/router.yaml")
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Run a reproducible offline policy-routing benchmark",
+    )
+    benchmark_parser.add_argument("--config", default="./config/router.yaml")
+    benchmark_parser.add_argument(
+        "--dataset",
+        default=None,
+        help="Optional YAML dataset path; defaults to the packaged policy benchmark",
+    )
+    benchmark_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the complete benchmark result as JSON",
+    )
 
     subparsers.add_parser(
         "profiles", help="List starter config profiles available for router init"
@@ -199,6 +217,16 @@ def main() -> None:
     elif args.command == "models":
         config = load_config(Path(args.config))
         _print_models(ChatService(config))
+    elif args.command == "benchmark":
+        config = load_config(Path(args.config))
+        try:
+            result = run_policy_benchmark(
+                config,
+                Path(args.dataset) if args.dataset else None,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        _print_benchmark(result, as_json=args.json)
     elif args.command == "profiles":
         _print_profiles()
     elif args.command == "quickstart":
@@ -392,6 +420,35 @@ def _print_route_decision(decision) -> None:
         print("- reasons:")
         for reason in agent_tools.reasons:
             print(f"  - {reason}")
+
+
+def _print_benchmark(result, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(result.to_dict(), indent=2))
+        return
+
+    print("RouteLabs Policy Routing Benchmark")
+    print(f"Dataset: {result.dataset}")
+    print(f"Cases passed: {result.passed}/{result.cases}")
+    print(f"Policy accuracy: {result.accuracy:.1%}")
+    print(f"Local route rate: {result.local_route_rate:.1%}")
+    print(f"Verification rate: {result.verification_rate:.1%}")
+    print(f"Estimated router cost: ${result.estimated_router_cost_usd:.4f}")
+    print(
+        "Estimated always-cloud cost: "
+        f"${result.estimated_always_cloud_cost_usd:.4f}"
+    )
+    print(
+        "Estimated savings vs always-cloud: "
+        f"${result.estimated_savings_vs_cloud_usd:.4f}"
+    )
+    print("")
+    print("This benchmark measures deterministic routing-policy expectations, not model answer quality.")
+    failures = [case for case in result.results if not case.passed]
+    if failures:
+        print("Failures:")
+        for case in failures:
+            print(f"- {case.name}: {'; '.join(case.mismatches)}")
 
 
 def _print_quickstart(service: ChatService, config) -> None:

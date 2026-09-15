@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- preserve explicitly supplied provider registries and report missing-provider health accurately, contributed in PR #1
+- run tests on Python 3.11 and 3.12 plus an installed-wheel smoke test for every pull request and push to `main`
+- add `router benchmark` for reproducible offline policy-routing evaluation, custom YAML datasets, and configured cost comparisons
+
 ## 0.5.0
 
 Highlights:
