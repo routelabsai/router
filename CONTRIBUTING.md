@@ -85,6 +85,10 @@ starting point:
 Every pull request runs CI on Python 3.11 and 3.12, plus an installed-wheel
 smoke test.
 
+For ready-to-scope work, see the
+[contributor backlog](docs/contributing/BACKLOG.md). Each entry includes likely
+files, acceptance criteria, and suggested labels.
+
 ## Code style
 
 - prefer simple interfaces

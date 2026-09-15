@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- publish a scoped contributor backlog with good-first-issue candidates, acceptance criteria, and maintainer response expectations
+
 ## 0.6.0
 
 - add deterministic local policy preflight for route inspection without starting a model runtime

@@ -464,6 +464,7 @@ Still early:
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
 - Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Contributor backlog: [docs/contributing/BACKLOG.md](docs/contributing/BACKLOG.md)
 - Release guide: [docs/release/README.md](docs/release/README.md)
 - PyPI trusted publishing: [docs/release/trusted-publishing.md](docs/release/trusted-publishing.md)
 
