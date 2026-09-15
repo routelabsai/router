@@ -1,11 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
+- add deterministic local policy preflight for route inspection without starting a model runtime
+- scrub detected email addresses, phone numbers, identifiers, payment-card patterns, and secrets before allowed cloud fallback or escalation
+- expose redaction decisions in request traces and support per-request `strip_pii` overrides
+- configure cloud scrubbing across the default and packaged starter profiles
 - preserve explicitly supplied provider registries and report missing-provider health accurately, contributed in PR #1
 - run tests on Python 3.11 and 3.12 plus an installed-wheel smoke test for every pull request and push to `main`
 - add `router benchmark` for reproducible offline policy-routing evaluation, custom YAML datasets, and configured cost comparisons
+- prevent ordinary prompts containing action words such as “write” or “edit” from being classified as agent-tool risks when no tool context exists
 - add structured issue forms, a pull request checklist, security reporting guidance, and concrete contributor tracks
+
+Suggested upgrade test:
+
+```bash
+pip install --upgrade routelabs-router
+router init --profile privacy-first --output ./config/router.yaml
+router benchmark --config ./config/router.yaml
+router route --config ./config/router.yaml --task "Summarize this note for alice@example.com"
+```
 
 ## 0.5.0
 
