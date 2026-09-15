@@ -2,9 +2,12 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/routelabs-router.svg)](https://pypi.org/project/routelabs-router/)
 [![Python versions](https://img.shields.io/pypi/pyversions/routelabs-router.svg)](https://pypi.org/project/routelabs-router/)
+[![CI](https://github.com/routelabsai/router/actions/workflows/ci.yml/badge.svg)](https://github.com/routelabsai/router/actions/workflows/ci.yml)
 [![Publish to PyPI](https://github.com/routelabsai/router/actions/workflows/publish.yml/badge.svg)](https://github.com/routelabsai/router/actions/workflows/publish.yml)
 
-`RouteLabs Router` is a local-first routing runtime that sits between your app and local/cloud LLMs.
+`RouteLabs Router` is a privacy-first inference control plane for coding agents,
+sensitive workloads, and applications that need to choose between local and
+cloud LLMs without hiding the decision.
 
 It lets you keep the client surface your app already uses while adding:
 
@@ -36,6 +39,18 @@ It gives applications one endpoint that can decide:
 - when declared agent tools should trigger approval or review
 
 The goal is simple: keep easy and sensitive work local, escalate only when needed, and stay compatible with the SDKs and agent tools people already use.
+
+Try the routing policy without a model, GPU, or API key:
+
+```bash
+pip install routelabs-router
+router init --profile privacy-first
+router benchmark --config ./config/router.yaml
+```
+
+The benchmark is deterministic and explicitly measures policy behavior—not
+model answer quality—so its results are reproducible on contributor machines
+and in CI.
 
 Current agent-framework guides:
 

@@ -15,7 +15,9 @@ This project is trying to make hybrid inference systems more practical, transpar
 
 ### 1. Start with an issue
 
-For new features or significant changes, open an issue first so we can align on scope.
+For new features or significant changes, use the relevant issue form first so
+we can align on scope. Small fixes with a focused test can go directly to a
+pull request.
 
 ### 2. Keep changes focused
 
@@ -50,12 +52,38 @@ router route --task "classify this email"
 
 ## Areas where help is especially welcome
 
-- runtime adapters
-- benchmarking harnesses
-- verification strategies
-- policy design
-- observability and tracing
-- SDKs and integrations
+These tracks are deliberately scoped so a contributor can find a concrete
+starting point:
+
+- **Benchmark datasets:** add labeled policy cases for coding-agent, privacy,
+  and tool-risk workloads under `src/routelabs_router/benchmarks/`. Run them
+  with `router benchmark --dataset <path>`.
+- **Runtime adapters:** extend the explicit adapter boundary under
+  `src/routelabs_router/adapters/` and add fake-provider tests before requiring
+  live credentials.
+- **Verification:** add verifier strategies behind the interface in
+  `src/routelabs_router/verify.py`, including examples that demonstrate when
+  escalation should and should not happen.
+- **Policy safety:** improve privacy, complexity, and tool-risk detection while
+  including both positive and false-positive regression cases.
+- **Integrations:** add minimal, executable examples for coding agents and
+  OpenAI- or Anthropic-compatible clients under `examples/`.
+- **Observability:** improve route traces and metrics without placing prompts,
+  credentials, or private content in telemetry by default.
+
+## Pull request checklist
+
+- explain the user-visible behavior and why it belongs in RouteLabs
+- add or update tests for behavior changes
+- run `pytest`
+- run `python scripts/release_smoke.py` when changing packaging, profiles, CLI,
+  or installed behavior
+- update the changelog for user-visible changes
+- keep secrets, production prompts, and customer data out of fixtures and logs
+- preserve an inspectable explanation when changing routing decisions
+
+Every pull request runs CI on Python 3.11 and 3.12, plus an installed-wheel
+smoke test.
 
 ## Code style
 

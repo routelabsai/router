@@ -1,0 +1,42 @@
+name: Benchmark dataset contribution
+description: Propose reproducible routing-policy cases or report a benchmark false positive.
+title: "benchmark: "
+labels:
+  - help wanted
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Contribution type
+      options:
+        - New workload dataset
+        - False-positive regression cases
+        - False-negative regression cases
+        - Benchmark runner improvement
+        - Cost-model improvement
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload and expected policy behavior
+      description: Explain the workload, expected route, complexity, verification, and tool-risk behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: cases
+    attributes:
+      label: Sanitized example cases
+      description: Provide synthetic or public examples only. Never submit real credentials or customer prompts.
+      render: yaml
+    validations:
+      required: true
+  - type: checkboxes
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - label: The examples contain no secrets, personal data, or proprietary prompts.
+          required: true
+        - label: I can run these cases offline with `router benchmark --dataset`.
+          required: true

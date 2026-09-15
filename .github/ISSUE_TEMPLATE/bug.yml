@@ -1,0 +1,61 @@
+name: Bug report
+description: Report reproducible incorrect behavior in routing, providers, APIs, or the CLI.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve RouteLabs Router. Remove secrets and private data before submitting.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest safe config and command or request that reproduces the problem.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Routing policy
+        - Privacy or redaction
+        - Tool-risk policy
+        - Provider adapter
+        - OpenAI-compatible API
+        - Anthropic-compatible API
+        - CLI or packaging
+        - Observability
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RouteLabs version or commit
+      placeholder: 0.5.0 or a4b5642
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Python version, local runtime, and relevant provider type. Do not include API keys.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private prompts, and customer data from this report.
+          required: true

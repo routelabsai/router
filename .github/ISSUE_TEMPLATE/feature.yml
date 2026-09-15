@@ -1,0 +1,50 @@
+name: Feature proposal
+description: Propose a focused routing, runtime, verification, or integration improvement.
+title: "feature: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete user or contributor problem should RouteLabs solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful outcome, including visible routing or trace behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Contribution track
+      options:
+        - Benchmark dataset
+        - Runtime adapter
+        - Verification strategy
+        - Privacy or policy safety
+        - Coding-agent integration
+        - Observability
+        - SDK or API compatibility
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions that would make this complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention workarounds or related projects when relevant.
