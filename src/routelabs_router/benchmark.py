@@ -65,15 +65,27 @@ def run_policy_benchmark(
         if not isinstance(expected, dict) or not expected:
             raise ValueError(f"benchmark case '{name}' must include expectations")
 
+        private = raw_case.get("private", False)
+        if not isinstance(private, bool):
+            _invalid_case_field(name, "private")
+        agent_role = raw_case.get("agent_role")
+        if agent_role is not None:
+            if not isinstance(agent_role, str) or agent_role.strip().lower() not in config.agents.roles:
+                _invalid_case_field(name, "agent_role")
+        tool_choice = raw_case.get("tool_choice")
+        if not _valid_tool_choice(tool_choice):
+            _invalid_case_field(name, "tool_choice")
+        _validate_expectations(expected, name)
+
         request = RouteRequest(
             task=task,
-            private=bool(raw_case.get("private", False)),
-            agent_role=raw_case.get("agent_role"),
+            private=private,
+            agent_role=agent_role,
             tool_names=_string_list(raw_case.get("tool_names", []), name),
             tool_descriptions=_string_mapping(
                 raw_case.get("tool_descriptions", {}), name
             ),
-            tool_choice=raw_case.get("tool_choice"),
+            tool_choice=tool_choice,
         )
         decision = engine.decide(request)
         risk_level = (
@@ -85,12 +97,6 @@ def run_policy_benchmark(
             "verify": decision.verify,
             "risk_level": risk_level,
         }
-        unsupported = sorted(set(expected) - set(actual))
-        if unsupported:
-            raise ValueError(
-                f"benchmark case '{name}' has unsupported expectations: "
-                + ", ".join(unsupported)
-            )
         mismatches = [
             f"{field}: expected {wanted!r}, got {actual[field]!r}"
             for field, wanted in expected.items()
@@ -143,6 +149,51 @@ def _load_dataset(dataset_path: Path | None) -> tuple[dict, str]:
     resource = files("routelabs_router.benchmarks").joinpath("policy-routing.yaml")
     raw = yaml.safe_load(resource.read_text(encoding="utf-8")) or {}
     return raw, str(raw.get("name") or "policy-routing")
+
+
+def _invalid_case_field(case_name: str, field_name: str) -> None:
+    raise ValueError(f"benchmark case '{case_name}' field '{field_name}' is invalid")
+
+
+def _valid_tool_choice(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value in {"auto", "none", "required", "any"}
+    if not isinstance(value, dict):
+        return False
+
+    choice_type = value.get("type")
+    if choice_type in {"auto", "none", "required", "any"}:
+        return True
+    if choice_type == "function":
+        function = value.get("function")
+        return (
+            isinstance(function, dict)
+            and isinstance(function.get("name"), str)
+            and bool(function["name"].strip())
+        )
+    if choice_type == "tool":
+        name = value.get("name")
+        return isinstance(name, str) and bool(name.strip())
+    return False
+
+
+def _validate_expectations(expected: dict, case_name: str) -> None:
+    validators = {
+        "target": lambda value: isinstance(value, str) and value in {"local", "cloud"},
+        "complexity": lambda value: (
+            isinstance(value, str) and value in {"low", "medium", "high"}
+        ),
+        "verify": lambda value: isinstance(value, bool),
+        "risk_level": lambda value: (
+            isinstance(value, str) and value in {"none", "low", "medium", "high"}
+        ),
+    }
+    for field, value in expected.items():
+        validator = validators.get(field)
+        if validator is None or not validator(value):
+            _invalid_case_field(case_name, f"expected.{field}")
 
 
 def _string_list(value: object, case_name: str) -> list[str]:
