@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Usage and setup questions
+    url: https://github.com/routelabsai/router/discussions
+    about: Ask questions and share integration ideas in GitHub Discussions.
+  - name: Security vulnerability
+    url: https://github.com/routelabsai/router/security/advisories/new
+    about: Report vulnerabilities privately; never put secrets or exploit details in a public issue.

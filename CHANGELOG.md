@@ -3,6 +3,7 @@
 ## Unreleased
 
 - publish a scoped contributor backlog with good-first-issue candidates, acceptance criteria, and maintainer response expectations
+- connect the issue chooser to GitHub Discussions and private vulnerability reporting
 
 ## 0.6.0
 
