@@ -10,6 +10,13 @@ from routelabs_router.config import Config
 from routelabs_router.models import RouteRequest
 from routelabs_router.router import RouterEngine
 
+_EXPECTED_FIELDS = {
+    "target": str,
+    "complexity": str,
+    "verify": bool,
+    "risk_level": str,
+}
+
 
 @dataclass(frozen=True)
 class BenchmarkCaseResult:
@@ -61,19 +68,24 @@ def run_policy_benchmark(
         task = raw_case.get("task")
         expected = raw_case.get("expected")
         if not isinstance(task, str) or not task.strip():
-            raise ValueError(f"benchmark case '{name}' must include a task")
+            raise ValueError(f"benchmark case '{name}' field 'task' must be a non-empty string")
         if not isinstance(expected, dict) or not expected:
-            raise ValueError(f"benchmark case '{name}' must include expectations")
+            raise ValueError(f"benchmark case '{name}' field 'expected' must be a non-empty mapping")
+
+        private = _optional_bool(raw_case.get("private", False), name, "private")
+        agent_role = _optional_string(raw_case.get("agent_role"), name, "agent_role")
+        tool_choice = _optional_tool_choice(raw_case.get("tool_choice"), name, "tool_choice")
+        _validate_expectations(expected, name)
 
         request = RouteRequest(
             task=task,
-            private=bool(raw_case.get("private", False)),
-            agent_role=raw_case.get("agent_role"),
+            private=private,
+            agent_role=agent_role,
             tool_names=_string_list(raw_case.get("tool_names", []), name),
             tool_descriptions=_string_mapping(
                 raw_case.get("tool_descriptions", {}), name
             ),
-            tool_choice=raw_case.get("tool_choice"),
+            tool_choice=tool_choice,
         )
         decision = engine.decide(request)
         risk_level = (
@@ -88,7 +100,7 @@ def run_policy_benchmark(
         unsupported = sorted(set(expected) - set(actual))
         if unsupported:
             raise ValueError(
-                f"benchmark case '{name}' has unsupported expectations: "
+                f"benchmark case '{name}' field 'expected' has unsupported keys: "
                 + ", ".join(unsupported)
             )
         mismatches = [
@@ -145,9 +157,50 @@ def _load_dataset(dataset_path: Path | None) -> tuple[dict, str]:
     return raw, str(raw.get("name") or "policy-routing")
 
 
+def _field_error(case_name: str, field: str, message: str) -> ValueError:
+    return ValueError(f"benchmark case '{case_name}' field '{field}' {message}")
+
+
+def _optional_bool(value: object, case_name: str, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise _field_error(case_name, field, "must be a boolean")
+    return value
+
+
+def _optional_string(value: object, case_name: str, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise _field_error(case_name, field, "must be a string")
+    return value
+
+
+def _optional_tool_choice(value: object, case_name: str, field: str) -> str | dict | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip():
+        return value
+    if isinstance(value, dict):
+        return value
+    raise _field_error(case_name, field, "must be a string or mapping")
+
+
+def _validate_expectations(expected: dict, case_name: str) -> None:
+    for field, wanted in expected.items():
+        allowed = _EXPECTED_FIELDS.get(field)
+        if allowed is None:
+            continue
+        if not isinstance(wanted, allowed):
+            raise _field_error(
+                case_name,
+                f"expected.{field}",
+                f"must be a {allowed.__name__}",
+            )
+
+
 def _string_list(value: object, case_name: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"benchmark case '{case_name}' tool_names must be strings")
+        raise _field_error(case_name, "tool_names", "must be a list of strings")
     return value
 
 
@@ -155,7 +208,9 @@ def _string_mapping(value: object, case_name: str) -> dict[str, str]:
     if not isinstance(value, dict) or not all(
         isinstance(key, str) and isinstance(item, str) for key, item in value.items()
     ):
-        raise ValueError(
-            f"benchmark case '{case_name}' tool_descriptions must map strings to strings"
+        raise _field_error(
+            case_name,
+            "tool_descriptions",
+            "must map strings to strings",
         )
     return value
