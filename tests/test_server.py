@@ -1386,6 +1386,16 @@ def test_healthz_reports_degraded_when_only_policy_engine_is_available() -> None
     assert data["providers"]["openai-compatible"]["available"] is False
 
 
+def test_chat_service_preserves_an_explicit_empty_provider_registry() -> None:
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={},
+    )
+
+    assert service.providers == {}
+
+
 def test_route_endpoint_works_without_model_providers() -> None:
     service = ChatService(
         DEFAULT_CONFIG,
