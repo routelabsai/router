@@ -159,7 +159,7 @@ def _valid_tool_choice(value: object) -> bool:
     if value is None:
         return True
     if isinstance(value, str):
-        return value in {"auto", "none", "required", "any"}
+        return bool(value.strip())
     if not isinstance(value, dict):
         return False
 

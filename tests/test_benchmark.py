@@ -52,13 +52,37 @@ def test_custom_benchmark_reports_mismatches(tmp_path) -> None:
     [
         ({"private": "false"}, {}, "private"),
         ({"agent_role": "unknown-role"}, {}, "agent_role"),
-        ({"tool_choice": "sometimes"}, {}, "tool_choice"),
+        ({"tool_choice": "   "}, {}, "tool_choice"),
         ({}, {"target": "edge"}, "expected.target"),
         ({}, {"complexity": "extreme"}, "expected.complexity"),
         ({}, {"verify": "yes"}, "expected.verify"),
         ({}, {"risk_level": "critical"}, "expected.risk_level"),
     ],
 )
+def test_benchmark_accepts_named_tool_choice(tmp_path) -> None:
+    dataset = tmp_path / "named-tool.yaml"
+    dataset.write_text(
+        yaml.safe_dump(
+            {
+                "name": "named-tool",
+                "cases": [
+                    {
+                        "name": "forced-tool",
+                        "task": "Use the lookup tool",
+                        "tool_choice": "mcp__tickets__lookup",
+                        "expected": {"target": "local"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_policy_benchmark(DEFAULT_CONFIG, dataset)
+
+    assert result.cases == 1
+
+
 def test_benchmark_rejects_invalid_case_values_without_exposing_fixture_content(
     tmp_path, case_update, expected_update, field_name
 ) -> None:
