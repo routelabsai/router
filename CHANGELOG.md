@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- validate custom benchmark dataset fields with case/field-specific errors that do not echo fixture content
 - publish a scoped contributor backlog with good-first-issue candidates, acceptance criteria, and maintainer response expectations
 - connect the issue chooser to GitHub Discussions and private vulnerability reporting
 
