@@ -533,6 +533,15 @@ router benchmark --config ./config/router.yaml
 router benchmark --config ./config/router.yaml --json
 ```
 
+To use a custom dataset as a CI quality gate, opt into a non-zero exit status
+when expectations do not match. The report is still printed before exit;
+without this flag, mismatches remain informational.
+
+```bash
+router benchmark --config ./config/router.yaml \
+  --dataset ./my-policy-cases.yaml --fail-on-mismatch
+```
+
 The report measures labeled routing-policy expectations, local-routing rate,
 verification rate, and configured request-cost estimates against an
 always-cloud baseline. It deliberately does not claim to measure model answer

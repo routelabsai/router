@@ -128,3 +128,81 @@ def test_benchmark_cli_prints_machine_readable_results(monkeypatch, capsys) -> N
     result = json.loads(capsys.readouterr().out)
     assert result["dataset"] == "route-policy-smoke-v1"
     assert result["passed"] == result["cases"]
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_benchmark_cli_fails_after_printing_mismatches(
+    monkeypatch, capsys, tmp_path, as_json
+) -> None:
+    dataset = tmp_path / "mismatch.yaml"
+    dataset.write_text(
+        yaml.safe_dump(
+            {
+                "name": "mismatch",
+                "cases": [
+                    {
+                        "name": "wrong-complexity",
+                        "task": "Write hello",
+                        "expected": {"complexity": "high"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    arguments = ["router", "benchmark", "--dataset", str(dataset)]
+    if as_json:
+        arguments.append("--json")
+    monkeypatch.setattr("sys.argv", [*arguments, "--fail-on-mismatch"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    if as_json:
+        result = json.loads(output)
+        assert result["passed"] == 0
+        assert result["results"][0]["mismatches"]
+    else:
+        assert "Cases passed: 0/1" in output
+        assert "wrong-complexity" in output
+
+
+def test_benchmark_cli_keeps_default_success_exit_for_mismatches(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    dataset = tmp_path / "mismatch.yaml"
+    dataset.write_text(
+        yaml.safe_dump(
+            {
+                "cases": [
+                    {
+                        "name": "wrong-complexity",
+                        "task": "Write hello",
+                        "expected": {"complexity": "high"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["router", "benchmark", "--dataset", str(dataset)]
+    )
+
+    cli.main()
+
+    assert "Cases passed: 0/1" in capsys.readouterr().out
+
+
+def test_benchmark_cli_succeeds_with_flag_when_all_cases_match(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv", ["router", "benchmark", "--fail-on-mismatch"]
+    )
+
+    cli.main()
+
+    assert "Cases passed: 8/8" in capsys.readouterr().out

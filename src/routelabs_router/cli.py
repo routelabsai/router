@@ -88,6 +88,11 @@ def main() -> None:
         action="store_true",
         help="Print the complete benchmark result as JSON",
     )
+    benchmark_parser.add_argument(
+        "--fail-on-mismatch",
+        action="store_true",
+        help="Exit with status 1 when any benchmark case does not match its expectations",
+    )
 
     subparsers.add_parser(
         "profiles", help="List starter config profiles available for router init"
@@ -227,6 +232,8 @@ def main() -> None:
         except ValueError as exc:
             parser.error(str(exc))
         _print_benchmark(result, as_json=args.json)
+        if args.fail_on_mismatch and result.passed != result.cases:
+            raise SystemExit(1)
     elif args.command == "profiles":
         _print_profiles()
     elif args.command == "quickstart":
