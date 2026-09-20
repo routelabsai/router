@@ -47,18 +47,6 @@ def test_custom_benchmark_reports_mismatches(tmp_path) -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    ("case_update", "expected_update", "field_name"),
-    [
-        ({"private": "false"}, {}, "private"),
-        ({"agent_role": "unknown-role"}, {}, "agent_role"),
-        ({"tool_choice": "   "}, {}, "tool_choice"),
-        ({}, {"target": "edge"}, "expected.target"),
-        ({}, {"complexity": "extreme"}, "expected.complexity"),
-        ({}, {"verify": "yes"}, "expected.verify"),
-        ({}, {"risk_level": "critical"}, "expected.risk_level"),
-    ],
-)
 def test_benchmark_accepts_named_tool_choice(tmp_path) -> None:
     dataset = tmp_path / "named-tool.yaml"
     dataset.write_text(
@@ -83,6 +71,18 @@ def test_benchmark_accepts_named_tool_choice(tmp_path) -> None:
     assert result.cases == 1
 
 
+@pytest.mark.parametrize(
+    ("case_update", "expected_update", "field_name"),
+    [
+        ({"private": "false"}, {}, "private"),
+        ({"agent_role": "unknown-role"}, {}, "agent_role"),
+        ({"tool_choice": "   "}, {}, "tool_choice"),
+        ({}, {"target": "edge"}, "expected.target"),
+        ({}, {"complexity": "extreme"}, "expected.complexity"),
+        ({}, {"verify": "yes"}, "expected.verify"),
+        ({}, {"risk_level": "critical"}, "expected.risk_level"),
+    ],
+)
 def test_benchmark_rejects_invalid_case_values_without_exposing_fixture_content(
     tmp_path, case_update, expected_update, field_name
 ) -> None:
