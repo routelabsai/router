@@ -79,6 +79,12 @@ def main() -> None:
     )
     benchmark_parser.add_argument("--config", default="./config/router.yaml")
     benchmark_parser.add_argument(
+        "--suite",
+        choices=["policy", "privacy"],
+        default="policy",
+        help="Packaged benchmark suite to run when --dataset is not supplied",
+    )
+    benchmark_parser.add_argument(
         "--dataset",
         default=None,
         help="Optional YAML dataset path; defaults to the packaged policy benchmark",
@@ -228,6 +234,7 @@ def main() -> None:
             result = run_policy_benchmark(
                 config,
                 Path(args.dataset) if args.dataset else None,
+                suite=args.suite,
             )
         except ValueError as exc:
             parser.error(str(exc))
@@ -440,6 +447,22 @@ def _print_benchmark(result, as_json: bool = False) -> None:
     print(f"Policy accuracy: {result.accuracy:.1%}")
     print(f"Local route rate: {result.local_route_rate:.1%}")
     print(f"Verification rate: {result.verification_rate:.1%}")
+    if result.privacy_cases:
+        print(f"Privacy cases: {result.privacy_cases}")
+        print(
+            "Privacy detection accuracy: "
+            f"{result.privacy_detection_accuracy:.1%}"
+        )
+        if result.privacy_category_precision is not None:
+            print(
+                "Privacy category precision: "
+                f"{result.privacy_category_precision:.1%}"
+            )
+        if result.privacy_category_recall is not None:
+            print(
+                "Privacy category recall: "
+                f"{result.privacy_category_recall:.1%}"
+            )
     print(f"Estimated router cost: ${result.estimated_router_cost_usd:.4f}")
     print(
         "Estimated always-cloud cost: "

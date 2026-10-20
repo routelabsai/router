@@ -60,6 +60,37 @@ Current status:
 - recent request-level logs implemented
 - optional OpenTelemetry-compatible route spans implemented
 - deterministic offline policy-routing benchmark implemented with custom dataset support
+- synthetic privacy-policy benchmark implemented with category precision/recall
+
+## 2026 focus
+
+The ecosystem increasingly separates API gateways, semantic/policy routers,
+and inference-replica schedulers. RouteLabs should own the semantic policy
+layer: deciding whether a request may leave the machine, which model class is
+appropriate, whether an agent action needs review, and why the decision was
+made. It should integrate with serving and scheduling projects rather than
+duplicate their cache-, replica-, or accelerator-level routing.
+
+Near-term priorities, in order:
+
+1. **Evaluation and routing safety:** expand privacy and verifier datasets,
+   add adversarial cost-escalation cases, and make benchmark output portable to
+   emerging router evaluation tools.
+2. **Standards-aligned observability:** map route and provider spans onto the
+   OpenTelemetry GenAI conventions while keeping prompts and sensitive content
+   opt-in.
+3. **Agent protocol interoperability:** track MCP task/extension evolution and
+   A2A agent discovery without making RouteLabs an agent runtime. Preserve the
+   existing OpenAI Responses and Anthropic Messages compatibility surfaces.
+4. **Production policy inputs:** add bounded health, latency, failure-rate, and
+   circuit-breaker signals to semantic decisions; leave replica selection to
+   inference schedulers.
+5. **Adoption:** ship the scoped TypeScript client and executable integrations
+   for coding-agent workflows.
+
+This order deliberately favors evidence and interoperability over adding a
+long list of provider adapters. Provider aggregation is useful, but it is not
+the project's distinguishing capability.
 
 ## Phase 2: Verification and evaluation
 

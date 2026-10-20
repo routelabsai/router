@@ -90,6 +90,24 @@ def _run_smoke(repo_root: Path, python: Path, tmp_path: Path) -> None:
         "This benchmark measures deterministic routing-policy expectations",
     )
 
+    privacy_benchmark_output = _run(
+        [
+            str(router),
+            "benchmark",
+            "--config",
+            str(output_config),
+            "--suite",
+            "privacy",
+            "--fail-on-mismatch",
+        ],
+        cwd=tmp_path,
+    ).stdout
+    _assert_contains(privacy_benchmark_output, "Cases passed: 15/15")
+    _assert_contains(
+        privacy_benchmark_output,
+        "Privacy category recall: 100.0%",
+    )
+
     import_output = _run(
         [
             str(venv_python),

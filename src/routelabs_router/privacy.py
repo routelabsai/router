@@ -52,7 +52,7 @@ class HeuristicPrivacyDetector:
         if CARD_RE.search(text):
             categories.append("account_number")
             reasons.append("detected account-or-card-like text")
-        if SECRET_RE.search(text):
+        if SECRET_RE.search(text) or ENV_SECRET_RE.search(text):
             categories.append("secret")
             reasons.append("detected secret-like token")
 

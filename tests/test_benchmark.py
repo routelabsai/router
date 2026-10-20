@@ -19,6 +19,63 @@ def test_packaged_policy_benchmark_passes() -> None:
     assert result.verification_rate == 0.75
     assert result.estimated_router_cost_usd == pytest.approx(0.0016)
     assert result.estimated_always_cloud_cost_usd == pytest.approx(0.16)
+    assert result.privacy_cases == 0
+    assert result.privacy_detection_accuracy is None
+
+
+def test_packaged_privacy_benchmark_reports_category_metrics() -> None:
+    result = run_policy_benchmark(DEFAULT_CONFIG, suite="privacy")
+
+    assert result.dataset == "privacy-policy-synthetic-v1"
+    assert result.cases == 15
+    assert result.passed == result.cases
+    assert result.privacy_cases == result.cases
+    assert result.privacy_detection_accuracy == 1.0
+    assert result.privacy_category_precision == 1.0
+    assert result.privacy_category_recall == 1.0
+    assert {
+        category.category for category in result.privacy_categories
+    } == {
+        "account_number",
+        "code",
+        "explicit_private_flag",
+        "private_email",
+        "private_identifier",
+        "private_phone",
+        "secret",
+    }
+
+
+def test_privacy_expectations_report_category_mismatches(tmp_path) -> None:
+    dataset = tmp_path / "privacy-mismatch.yaml"
+    dataset.write_text(
+        yaml.safe_dump(
+            {
+                "cases": [
+                    {
+                        "name": "wrong-category",
+                        "task": "Draft a reply to alex@example.invalid",
+                        "expected": {
+                            "privacy_detected": True,
+                            "privacy_categories": ["secret"],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_policy_benchmark(DEFAULT_CONFIG, dataset)
+
+    assert result.passed == 0
+    assert result.privacy_detection_accuracy == 1.0
+    assert result.privacy_category_precision == 0.0
+    assert result.privacy_category_recall == 0.0
+    assert result.results[0].privacy_categories == ["private_email"]
+    assert result.results[0].mismatches == [
+        "privacy_categories: expected ['secret'], got ['private_email']"
+    ]
 
 
 def test_custom_benchmark_reports_mismatches(tmp_path) -> None:
@@ -81,6 +138,13 @@ def test_benchmark_accepts_named_tool_choice(tmp_path) -> None:
         ({}, {"complexity": "extreme"}, "expected.complexity"),
         ({}, {"verify": "yes"}, "expected.verify"),
         ({}, {"risk_level": "critical"}, "expected.risk_level"),
+        ({}, {"privacy_detected": "yes"}, "expected.privacy_detected"),
+        ({}, {"privacy_categories": [""]}, "expected.privacy_categories"),
+        (
+            {},
+            {"privacy_detected": False, "privacy_categories": ["secret"]},
+            "expected.privacy_categories",
+        ),
     ],
 )
 def test_benchmark_rejects_invalid_case_values_without_exposing_fixture_content(
@@ -128,6 +192,20 @@ def test_benchmark_cli_prints_machine_readable_results(monkeypatch, capsys) -> N
     result = json.loads(capsys.readouterr().out)
     assert result["dataset"] == "route-policy-smoke-v1"
     assert result["passed"] == result["cases"]
+
+
+def test_benchmark_cli_runs_packaged_privacy_suite(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["router", "benchmark", "--suite", "privacy", "--fail-on-mismatch"],
+    )
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "Dataset: privacy-policy-synthetic-v1" in output
+    assert "Privacy detection accuracy: 100.0%" in output
+    assert "Privacy category recall: 100.0%" in output
 
 
 @pytest.mark.parametrize("as_json", [False, True])

@@ -1,4 +1,13 @@
-from routelabs_router.privacy import redact_sensitive_text
+from routelabs_router.privacy import HeuristicPrivacyDetector, redact_sensitive_text
+
+
+def test_environment_style_secret_is_detected() -> None:
+    result = HeuristicPrivacyDetector().evaluate(
+        "Check ROUTER_API_KEY=not-a-real-secret-value"
+    )
+
+    assert result.detected is True
+    assert result.categories == ["secret"]
 
 
 def test_redact_sensitive_text_covers_common_pii_and_secret_patterns() -> None:

@@ -71,6 +71,8 @@ Acceptance criteria:
 
 ### Build a sanitized privacy-policy evaluation dataset
 
+Status: implemented in the next release through the packaged `privacy` suite.
+
 Suggested labels: `help wanted`
 
 Why: privacy routing needs measurable precision and recall, especially for

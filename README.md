@@ -46,11 +46,16 @@ Try the routing policy without a model, GPU, or API key:
 pip install routelabs-router
 router init --profile privacy-first
 router benchmark --config ./config/router.yaml
+router benchmark --suite privacy --fail-on-mismatch
 ```
 
 The benchmark is deterministic and explicitly measures policy behavior—not
 model answer quality—so its results are reproducible on contributor machines
 and in CI.
+
+The packaged [privacy benchmark](docs/privacy-benchmark.md) adds synthetic
+positive and near-miss cases, category-level precision and recall, and a
+non-zero CI exit mode without sending fixture content to a model or provider.
 
 Current agent-framework guides:
 

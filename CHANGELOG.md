@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- add a packaged synthetic privacy benchmark with detection accuracy, category-level precision/recall, near-miss cases, JSON output, and CI failure support
+- detect environment-style API keys, tokens, secrets, and passwords as sensitive content before routing
 - add an opt-in `router benchmark --fail-on-mismatch` exit code for CI while preserving benchmark reports
 - validate custom benchmark dataset fields with case/field-specific errors that do not echo fixture content
 - publish a scoped contributor backlog with good-first-issue candidates, acceptance criteria, and maintainer response expectations

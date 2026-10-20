@@ -1,0 +1,105 @@
+name: privacy-policy-synthetic-v1
+description: Synthetic privacy positives and near-miss negatives. Contains no real personal or credential data.
+cases:
+  - name: explicit-private-flag
+    task: Rewrite this internal planning note
+    private: true
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [explicit_private_flag]
+
+  - name: synthetic-email
+    task: Draft a reply to alex@example.invalid
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [private_email]
+
+  - name: synthetic-phone
+    task: Format the fictional phone number 202-555-0147
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [private_phone]
+
+  - name: synthetic-identifier
+    task: Mask the test SSN 000-12-3456
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [private_identifier]
+
+  - name: standard-test-card
+    task: Redact the standard test card 4111 1111 1111 1111
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [account_number]
+
+  - name: nonfunctional-api-token
+    task: Remove this nonfunctional token sk-EXAMPLE000000000000000000
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [secret]
+
+  - name: synthetic-environment-secret
+    task: Check ROUTER_API_KEY=not-a-real-secret-value
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [secret]
+
+  - name: code-content
+    task: |-
+      Review this example:
+      import json
+      def parse(value):
+          return json.loads(value)
+    expected:
+      target: local
+      privacy_detected: true
+      privacy_categories: [code]
+
+  - name: public-prose
+    task: Summarize the public product documentation
+    expected:
+      privacy_detected: false
+      privacy_categories: []
+
+  - name: email-near-miss
+    task: Explain how to write an address as user at example dot com
+    expected:
+      privacy_detected: false
+      privacy_categories: []
+
+  - name: phone-near-miss
+    task: Find order 555-0147 in the public catalog
+    expected:
+      privacy_detected: false
+      privacy_categories: []
+
+  - name: identifier-near-miss
+    task: Explain the document section 12-3456
+    expected:
+      privacy_detected: false
+      privacy_categories: []
+
+  - name: short-account-near-miss
+    task: Compare public catalog number 123456789012
+    expected:
+      privacy_detected: false
+      privacy_categories: []
+
+  - name: short-token-near-miss
+    task: Explain why sk-short is only an example label
+    expected:
+      privacy_detected: false
+      privacy_categories: []
+
+  - name: code-word-near-miss
+    task: Write an import strategy for the migration
+    expected:
+      privacy_detected: false
+      privacy_categories: []
