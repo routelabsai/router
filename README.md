@@ -127,12 +127,68 @@ If you prefer Anthropic-style clients:
 curl -X POST http://127.0.0.1:8000/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
-    "model":"claude-sonnet-4-20250514",
+    "model":"claude-sonnet-5-5",
     "max_tokens":256,
     "messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}],
     "private":false
   }'
 ```
+
+## Plug It Into Your Coding Agent
+
+Most agent tools only let you change a base URL and a model name, so RouteLabs
+accepts routing controls as HTTP headers and model aliases as well as
+body fields.
+
+**Claude Code** (or any Anthropic SDK client):
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8000
+export ANTHROPIC_API_KEY=unused-or-your-ROUTELABS_API_KEY
+claude
+```
+
+Claude Code sends real model names such as `claude-sonnet-5-5`. RouteLabs
+only forwards a vendor model name to the matching cloud provider. Local
+routes always use your configured local model, and cloud escalation prefers
+the Anthropic provider for `claude-*` names and the OpenAI provider for
+`gpt-*` / `o*` names when both are configured.
+
+**OpenAI SDK, Codex-style agents, Cline, Continue, Cursor, Open WebUI**: set
+the OpenAI base URL to `http://127.0.0.1:8000/v1` (for the SDKs,
+`OPENAI_BASE_URL`). Content-part arrays, images, `developer` messages,
+`max_completion_tokens`, `stream_options.include_usage`, and Responses API
+`function_call` / `function_call_output` tool loops are all supported.
+
+**Routing controls without changing request bodies:**
+
+| Header | Effect |
+| --- | --- |
+| `x-routelabs-private: true` | keep this request local; never fall back to cloud |
+| `x-routelabs-allow-fallbacks: false` | disable cloud fallback and escalation |
+| `x-routelabs-max-cloud-cost-usd: 0.05` | cap the configured cloud cost for this request |
+| `x-routelabs-strip-pii: true` | force PII scrubbing before any cloud call |
+| `x-routelabs-agent-role: planner` | apply an agent-role route from your config |
+
+Or pick a model alias: `auto` (default routing) or `routelabs/private`
+(the same as `private: true`).
+
+**Every response says where it ran**, so you can see the decision without
+parsing the trace:
+
+```text
+x-routelabs-target: local
+x-routelabs-provider: ollama
+x-routelabs-model: qwen3:4b
+x-routelabs-escalated: false
+x-routelabs-reason: task is suitable for local-first execution
+```
+
+**Exposing the router beyond localhost** (a home GPU box or a shared team
+server): set `ROUTELABS_API_KEY` before `router start`. Every `/v1/*` request
+must then send that key as `Authorization: Bearer <key>` or `x-api-key`.
+`/healthz` stays open. `router start` prints a warning if you bind to a
+non-loopback host without a key.
 
 ## Why Use This
 
@@ -339,7 +395,7 @@ If `Ollama` is running locally, that request executes against your configured lo
 If `OPENAI_API_KEY` is set, high-complexity requests can route through the configured OpenAI-compatible cloud provider.
 The response includes a trace showing the initial route, verification result,
 any escalation, and a short summary such as `Stayed local on ollama/qwen3:4b`
-or `Fell back to cloud on openai-compatible/gpt-4.1-mini`.
+or `Fell back to cloud on openai-compatible/gpt-5-mini`.
 
 Newer OpenAI-style agent clients can also use `/v1/responses`:
 
@@ -374,7 +430,7 @@ Anthropic-style clients can use `/v1/messages`:
 curl -X POST http://127.0.0.1:8000/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
-    "model":"claude-sonnet-4-20250514",
+    "model":"claude-sonnet-5-5",
     "max_tokens":256,
     "messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}],
     "private":false
@@ -601,7 +657,7 @@ To put RouteLabs in front of a local LiteLLM proxy:
 
 ```bash
 router init --profile litellm-proxy --output ./config/router.yaml --force
-litellm --model openai/gpt-4.1-mini
+litellm --model openai/gpt-5-mini
 router start
 ```
 
@@ -981,7 +1037,7 @@ client = Anthropic(
 )
 
 response = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-5-5",
     max_tokens=256,
     messages=[
         {
@@ -1109,7 +1165,12 @@ curl -N -X POST http://127.0.0.1:8000/v1/chat/completions \
   }'
 ```
 
-This currently exposes an OpenAI-style SSE stream from the RouteLabs API layer so existing clients can consume streamed chunks normally.
+`/v1/chat/completions`, `/v1/responses` and `/v1/messages` all stream in the
+event format their official SDKs expect, including tool calls and
+`stream_options.include_usage`. RouteLabs waits for the full provider answer
+so the verifier can check it before deciding whether to escalate, then replays
+it as a stream. Text is replayed byte for byte, so code blocks and indentation
+survive. Expect time-to-first-token to equal the full generation time for now.
 
 ### Structured outputs and passthrough
 
@@ -1118,7 +1179,7 @@ RouteLabs now passes through several common OpenAI chat request fields so existi
 - `response_format`
 - `temperature`
 - `top_p`
-- `max_tokens`
+- `max_tokens` / `max_completion_tokens` (sent as `max_completion_tokens` to OpenAI reasoning models)
 - `stop`
 - `seed`
 - `frequency_penalty`
@@ -1157,7 +1218,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 
 ### Existing tool compatibility
 
-RouteLabs now exposes the two OpenAI-style endpoints many existing tools check first:
+RouteLabs exposes the OpenAI-style endpoints many existing tools check first:
 
 - `/v1/chat/completions`
 - `/v1/embeddings`
