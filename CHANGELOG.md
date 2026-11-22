@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0
+
+Realtime streaming:
+
+- stream provider tokens to the client as they are generated on `/v1/chat/completions`, `/v1/responses` and `/v1/messages`, for Ollama, OpenAI-compatible servers (llama.cpp, LM Studio, vLLM, OpenAI, LiteLLM) and Anthropic
+- add `routing.streaming` (`auto`, `realtime`, `buffered`) and the per-request `x-routelabs-stream` header. `auto` streams live whenever verification could not change the outcome and buffers only when a verified local answer could still escalate
+- stream model reasoning (Ollama `thinking`, `reasoning_content`, Anthropic thinking) as OpenAI-style `reasoning_content` deltas and Anthropic `thinking` blocks. With `qwen3:4b` on Ollama, the first visible token now arrives in 0.15s instead of 44.5s
+- keep cloud fallback when the local provider fails before the first token, and end the stream with a client-format error event when it fails mid-stream
+- run the verifier after realtime streams and record its verdict, telemetry, and traces as for buffered requests
+- report the mode in an `x-routelabs-streaming` response header
+- fix Ollama ignoring `max_completion_tokens`
+
 ## 0.7.0
 
 Client compatibility (found by pointing real SDKs and agent tools at the router):

@@ -6,6 +6,9 @@ routing:
   default_mode: "balanced"
   escalate_on_verification_failure: true
   prefer_local_for_private: true
+  # auto | realtime | buffered. auto streams tokens live unless a verified
+  # local answer could still escalate to the cloud.
+  streaming: "auto"
 
 providers:
   local:

@@ -1,12 +1,20 @@
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
-from routelabs_router.models import content_text
+from routelabs_router.streaming import (
+    StreamEnd,
+    StreamEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallDelta,
+)
 from routelabs_router.models import (
+    content_text,
     ChatCompletionRequest,
     ChatMessage,
     EmbeddingObject,
@@ -22,13 +30,13 @@ class OllamaChatAdapter:
         self.config = config
         self.timeout = config.timeout_seconds
 
-    def complete(
-        self, request: ChatCompletionRequest, model: str | None = None
-    ) -> ProviderResult:
-        payload = {
+    def _chat_payload(
+        self, request: ChatCompletionRequest, model: str | None, stream: bool
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": model or request.model or self.config.model,
             "messages": [_serialize_ollama_message(message) for message in request.messages],
-            "stream": False,
+            "stream": stream,
         }
         format_value = _map_ollama_format(request.response_format)
         if format_value is not None:
@@ -37,26 +45,24 @@ class OllamaChatAdapter:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
-        if request.temperature is not None:
-            payload["options"] = {**payload.get("options", {}), "temperature": request.temperature}
-        if request.top_p is not None:
-            payload["options"] = {**payload.get("options", {}), "top_p": request.top_p}
-        if request.stop is not None:
-            payload["options"] = {**payload.get("options", {}), "stop": request.stop}
-        if request.max_tokens is not None:
-            payload["options"] = {**payload.get("options", {}), "num_predict": request.max_tokens}
-        if request.seed is not None:
-            payload["options"] = {**payload.get("options", {}), "seed": request.seed}
-        if request.frequency_penalty is not None:
-            payload["options"] = {
-                **payload.get("options", {}),
-                "frequency_penalty": request.frequency_penalty,
-            }
-        if request.presence_penalty is not None:
-            payload["options"] = {
-                **payload.get("options", {}),
-                "presence_penalty": request.presence_penalty,
-            }
+        options = {
+            "temperature": request.temperature,
+            "top_p": request.top_p,
+            "stop": request.stop,
+            "num_predict": request.output_token_limit,
+            "seed": request.seed,
+            "frequency_penalty": request.frequency_penalty,
+            "presence_penalty": request.presence_penalty,
+        }
+        options = {key: value for key, value in options.items() if value is not None}
+        if options:
+            payload["options"] = options
+        return payload
+
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        payload = self._chat_payload(request, model, stream=False)
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
@@ -82,6 +88,60 @@ class OllamaChatAdapter:
             tool_calls=_extract_tool_calls(data),
             raw=data,
         )
+
+    def stream(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> Iterator[StreamEvent]:
+        payload = self._chat_payload(request, model, stream=True)
+        model_name = str(payload["model"])
+        tool_index = 0
+        end = StreamEnd(model=model_name)
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST", f"{self.config.base_url.rstrip('/')}/api/chat", json=payload
+                ) as response:
+                    if response.status_code >= 400:
+                        response.read()
+                        raise ProviderExecutionError(
+                            "ollama", f"HTTP {response.status_code}: {response.text[:300]}"
+                        )
+                    for line in response.iter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if chunk.get("error"):
+                            raise ProviderExecutionError("ollama", str(chunk["error"])[:300])
+                        message = chunk.get("message") or {}
+                        if message.get("thinking"):
+                            yield ThinkingDelta(str(message["thinking"]))
+                        if message.get("content"):
+                            yield TextDelta(str(message["content"]))
+                        for tool_call in message.get("tool_calls") or []:
+                            function = tool_call.get("function", {})
+                            yield ToolCallDelta(
+                                index=tool_index,
+                                id=tool_call.get("id") or f"call_{tool_index}",
+                                name=function.get("name", ""),
+                                arguments=_normalize_arguments(function.get("arguments", {})),
+                            )
+                            tool_index += 1
+                        if chunk.get("done"):
+                            end = StreamEnd(
+                                finish_reason="tool_calls"
+                                if tool_index
+                                else str(chunk.get("done_reason") or "stop"),
+                                usage=_extract_usage(chunk),
+                                model=str(chunk.get("model") or model_name),
+                            )
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError("ollama", "request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderExecutionError("ollama", str(exc)) from exc
+        yield end
 
     def embed(
         self, request: EmbeddingsRequest, model: str | None = None
