@@ -2400,3 +2400,192 @@ def test_api_key_auth_protects_v1_routes(monkeypatch) -> None:
         client.post("/v1/chat/completions", json=body, headers={"x-api-key": "secret-key"}).status_code
         == 200
     )
+
+
+# ---------------------------------------------------------------------------
+# Realtime streaming
+# ---------------------------------------------------------------------------
+
+from routelabs_router.streaming import StreamEnd, TextDelta  # noqa: E402
+
+HARD_TASK = (
+    "Design a distributed consensus architecture for a multi-region database, "
+    "compare tradeoffs, and analyze failure modes in depth"
+)
+
+
+class StreamingProvider:
+    def __init__(self, pieces=("Hello", "\n  ", "world"), fail_open=False, fail_after=None):
+        self.pieces = pieces
+        self.fail_open = fail_open
+        self.fail_after = fail_after
+        self.stream_calls = 0
+        self.complete_calls = 0
+
+    def complete(self, request, model=None):
+        self.complete_calls += 1
+        return ProviderResult(content="".join(self.pieces), model=model or "buffered")
+
+    def stream(self, request, model=None):
+        self.stream_calls += 1
+        if self.fail_open:
+            raise ProviderExecutionError("ollama", "connection refused")
+        for index, piece in enumerate(self.pieces):
+            if self.fail_after is not None and index == self.fail_after:
+                raise ProviderExecutionError("ollama", "connection reset")
+            yield TextDelta(piece)
+        yield StreamEnd(
+            finish_reason="stop",
+            usage={"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+            model=model,
+        )
+
+
+def _streaming_service(local, cloud=None, config=DEFAULT_CONFIG) -> ChatService:
+    providers = {"ollama": local}
+    if cloud is not None:
+        providers["openai-compatible"] = cloud
+    return ChatService(config, router=RouterEngine(config), providers=providers)
+
+
+def _chat_stream(client, content, headers=None, **body):
+    return client.post(
+        "/v1/chat/completions",
+        headers=headers or {},
+        json={"stream": True, "messages": [{"role": "user", "content": content}], **body},
+    )
+
+
+def test_auto_mode_streams_live_when_verification_cannot_escalate() -> None:
+    local = StreamingProvider()
+    client = TestClient(create_app(service=_streaming_service(local)))
+    response = _chat_stream(client, "hi")
+
+    assert response.headers["x-routelabs-streaming"] == "realtime"
+    assert local.stream_calls == 1 and local.complete_calls == 0
+    text = "".join(
+        c["choices"][0]["delta"].get("content", "")
+        for c in _sse_payloads(response.text)
+        if c["choices"]
+    )
+    assert text == "Hello\n  world"
+
+
+def test_auto_mode_buffers_verified_routes_that_could_escalate() -> None:
+    local = StreamingProvider()
+    client = TestClient(create_app(service=_streaming_service(local, cloud=FakeCloudProvider())))
+    response = _chat_stream(client, HARD_TASK)
+
+    assert response.headers["x-routelabs-streaming"] == "buffered"
+    assert local.stream_calls == 0
+
+
+def test_private_requests_stream_live_even_when_verified() -> None:
+    local = StreamingProvider()
+    client = TestClient(create_app(service=_streaming_service(local, cloud=FakeCloudProvider())))
+    response = _chat_stream(client, HARD_TASK, headers={"x-routelabs-private": "true"})
+
+    assert response.headers["x-routelabs-streaming"] == "realtime"
+    assert local.stream_calls == 1
+
+
+def test_realtime_header_streams_live_and_records_verification_afterwards() -> None:
+    local = StreamingProvider(pieces=("I'm not sure.",))
+    service = _streaming_service(local, cloud=FakeCloudProvider())
+    client = TestClient(create_app(service=service))
+    response = _chat_stream(client, HARD_TASK, headers={"x-routelabs-stream": "realtime"})
+
+    assert response.headers["x-routelabs-streaming"] == "realtime"
+    log = service.get_recent_logs().entries[-1]
+    assert log.trace.verification is not None
+    assert log.trace.verification.should_escalate
+    assert "realtime streaming cannot escalate" in log.trace.escalation_reason
+    assert service.get_stats().total_requests == 1
+
+
+def test_buffered_header_forces_replay() -> None:
+    local = StreamingProvider()
+    client = TestClient(create_app(service=_streaming_service(local)))
+    response = _chat_stream(client, "hi", headers={"x-routelabs-stream": "buffered"})
+    assert response.headers["x-routelabs-streaming"] == "buffered"
+    assert local.stream_calls == 0
+
+
+def test_invalid_stream_mode_header_is_rejected() -> None:
+    client = TestClient(create_app(service=_streaming_service(StreamingProvider())))
+    response = _chat_stream(client, "hi", headers={"x-routelabs-stream": "fast"})
+    assert response.status_code == 400
+
+
+def test_stream_falls_back_to_cloud_when_local_fails_before_first_token() -> None:
+    local = StreamingProvider(fail_open=True)
+    cloud = StreamingProvider(pieces=("cloud", " answer"))
+    client = TestClient(create_app(service=_streaming_service(local, cloud=cloud)))
+    response = _chat_stream(client, "hi")
+
+    assert response.status_code == 200
+    assert response.headers["x-routelabs-target"] == "cloud"
+    assert response.headers["x-routelabs-escalated"] == "true"
+    assert cloud.stream_calls == 1
+
+
+def test_mid_stream_provider_failure_emits_an_error_event() -> None:
+    local = StreamingProvider(fail_after=1)
+    client = TestClient(create_app(service=_streaming_service(local)))
+    response = _chat_stream(client, "hi")
+    payloads = _sse_payloads(response.text)
+    assert payloads[-1]["error"]["message"] == "connection reset"
+    assert response.text.rstrip().endswith("data: [DONE]")
+
+
+def test_anthropic_and_responses_live_streams_carry_usage_and_ids() -> None:
+    client = TestClient(create_app(service=_streaming_service(StreamingProvider())))
+    anthropic = client.post(
+        "/v1/messages",
+        json={"stream": True, "max_tokens": 32, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    events = _sse_payloads(anthropic.text)
+    assert anthropic.headers["x-routelabs-streaming"] == "realtime"
+    assert anthropic.headers["x-routelabs-request-id"] == events[0]["message"]["id"]
+    delta = next(e for e in events if e["type"] == "message_delta")
+    assert delta["usage"]["output_tokens"] == 3
+    assert delta["delta"]["stop_reason"] == "end_turn"
+
+    responses = client.post("/v1/responses", json={"stream": True, "input": "hi"})
+    events = _sse_payloads(responses.text)
+    completed = events[-1]
+    assert completed["type"] == "response.completed"
+    assert completed["response"]["output_text"] == "Hello\n  world"
+    assert completed["response"]["id"] == responses.headers["x-routelabs-request-id"]
+
+
+def test_thinking_streams_as_anthropic_thinking_block_and_reasoning_content() -> None:
+    from routelabs_router.streaming import ThinkingDelta
+
+    class ThinkingProvider(StreamingProvider):
+        def stream(self, request, model=None):
+            yield ThinkingDelta("step 1")
+            yield ThinkingDelta(", step 2")
+            yield TextDelta("Answer")
+            yield StreamEnd(model=model)
+
+    client = TestClient(create_app(service=_streaming_service(ThinkingProvider())))
+    anthropic = client.post(
+        "/v1/messages",
+        json={"stream": True, "max_tokens": 32, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    events = _sse_payloads(anthropic.text)
+    starts = [e["content_block"]["type"] for e in events if e["type"] == "content_block_start"]
+    assert starts == ["thinking", "text"]
+    thinking = "".join(
+        e["delta"].get("thinking", "") for e in events if e["type"] == "content_block_delta"
+    )
+    assert thinking == "step 1, step 2"
+    stops = [e["index"] for e in events if e["type"] == "content_block_stop"]
+    assert stops == [0, 1]
+
+    chat = _chat_stream(client, "hi")
+    deltas = [c["choices"][0]["delta"] for c in _sse_payloads(chat.text) if c["choices"]]
+    assert {"reasoning_content": "step 1"} in deltas
+    final_text = "".join(d.get("content", "") for d in deltas)
+    assert final_text == "Answer"

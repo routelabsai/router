@@ -169,6 +169,7 @@ the OpenAI base URL to `http://127.0.0.1:8000/v1` (for the SDKs,
 | `x-routelabs-max-cloud-cost-usd: 0.05` | cap the configured cloud cost for this request |
 | `x-routelabs-strip-pii: true` | force PII scrubbing before any cloud call |
 | `x-routelabs-agent-role: planner` | apply an agent-role route from your config |
+| `x-routelabs-stream: realtime` | stream tokens live even when the answer would otherwise be verified first (see [Streaming](#streaming)) |
 
 Or pick a model alias: `auto` (default routing) or `routelabs/private`
 (the same as `private: true`).
@@ -1151,26 +1152,44 @@ If the model decides to call a tool, the response returns OpenAI-style `tool_cal
 
 ### Streaming
 
-RouteLabs now supports OpenAI-style streaming on `/v1/chat/completions` when `stream=true`.
+`/v1/chat/completions`, `/v1/responses` and `/v1/messages` all stream in the
+event format their official SDKs expect, including tool calls, usage, and
+`stream_options.include_usage`.
 
-Example:
+Tokens are forwarded **as the model generates them** whenever verification
+could not change the outcome: cloud routes, private requests, requests with
+fallbacks disabled, and routes that are not verified. Model reasoning (Ollama
+`thinking`, `reasoning_content` from llama.cpp, vLLM and LM Studio, and
+Anthropic thinking) streams as OpenAI-style `reasoning_content` deltas and
+Anthropic `thinking` blocks, so a reasoning model shows output immediately
+instead of after its whole chain of thought. Measured with `qwen3:4b` on
+Ollama, the first visible token arrived in 0.15s instead of 44.5s.
+
+When a local answer is verified and could still escalate to the cloud,
+RouteLabs buffers it, verifies it, and then replays it byte for byte. You
+choose the trade-off:
+
+| `routing.streaming` / `x-routelabs-stream` | Behavior |
+| --- | --- |
+| `auto` (default) | stream live unless verification could trigger an escalation |
+| `realtime` | always stream live; the verifier still runs and records its verdict, but cannot escalate once output has started |
+| `buffered` | always verify first, then replay |
+
+Each streamed response reports its mode in `x-routelabs-streaming:
+realtime|buffered`. If the local provider fails before the first token,
+RouteLabs still falls back to the cloud. A failure after output has started
+ends the stream with an error event in the client's format. Requests with a
+`response_format` are always buffered so the JSON can be validated.
 
 ```bash
 curl -N -X POST http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "x-routelabs-stream: realtime" \
   -d '{
-    "model":"route-auto",
     "stream":true,
     "messages":[{"role":"user","content":"Summarize RouteLabs Router in one sentence."}]
   }'
 ```
-
-`/v1/chat/completions`, `/v1/responses` and `/v1/messages` all stream in the
-event format their official SDKs expect, including tool calls and
-`stream_options.include_usage`. RouteLabs waits for the full provider answer
-so the verifier can check it before deciding whether to escalate, then replays
-it as a stream. Text is replayed byte for byte, so code blocks and indentation
-survive. Expect time-to-first-token to equal the full generation time for now.
 
 ### Structured outputs and passthrough
 

@@ -1,10 +1,20 @@
+import json
 import re
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
+from routelabs_router.streaming import (
+    StreamEnd,
+    StreamEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallDelta,
+    iter_sse_data,
+)
 from routelabs_router.models import (
     ChatCompletionRequest,
     ChatMessage,
@@ -21,9 +31,15 @@ class OpenAICompatibleChatAdapter:
         self.config = config
         self.timeout = config.timeout_seconds
 
-    def complete(
-        self, request: ChatCompletionRequest, model: str | None = None
-    ) -> ProviderResult:
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        return headers
+
+    def _chat_payload(
+        self, request: ChatCompletionRequest, model: str | None
+    ) -> dict[str, Any]:
         model_name = model or request.model or self.config.model
         payload: dict[str, Any] = {
             "model": model_name,
@@ -54,16 +70,18 @@ class OpenAICompatibleChatAdapter:
                 value = getattr(request, field)
                 if value is not None:
                     payload[field] = value
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        return payload
 
+    def complete(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> ProviderResult:
+        payload = self._chat_payload(request, model)
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
                     json=payload,
-                    headers=headers,
+                    headers=self._headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -82,6 +100,68 @@ class OpenAICompatibleChatAdapter:
             tool_calls=_extract_tool_calls(data),
             raw=data,
         )
+
+    def stream(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> Iterator[StreamEvent]:
+        payload = self._chat_payload(request, model)
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+        model_name = str(payload["model"])
+        finish_reason = "stop"
+        usage: dict[str, int] = {}
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self.config.base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=self._headers(),
+                ) as response:
+                    if response.status_code >= 400:
+                        response.read()
+                        raise ProviderExecutionError(
+                            "openai-compatible",
+                            f"HTTP {response.status_code}: {response.text[:300]}",
+                        )
+                    for data in iter_sse_data(response.iter_lines()):
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if chunk.get("error"):
+                            raise ProviderExecutionError(
+                                "openai-compatible", str(chunk["error"])[:300]
+                            )
+                        model_name = str(chunk.get("model") or model_name)
+                        if chunk.get("usage"):
+                            usage = _extract_usage(chunk)
+                        for choice in chunk.get("choices") or []:
+                            delta = choice.get("delta") or {}
+                            # llama.cpp, vLLM, LM Studio and DeepSeek-style
+                            # servers stream reasoning in a separate field.
+                            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                            if isinstance(reasoning, str) and reasoning:
+                                yield ThinkingDelta(reasoning)
+                            if delta.get("content"):
+                                yield TextDelta(str(delta["content"]))
+                            for tool_call in delta.get("tool_calls") or []:
+                                function = tool_call.get("function") or {}
+                                yield ToolCallDelta(
+                                    index=int(tool_call.get("index", 0) or 0),
+                                    id=tool_call.get("id"),
+                                    name=function.get("name"),
+                                    arguments=function.get("arguments") or "",
+                                )
+                            if choice.get("finish_reason"):
+                                finish_reason = str(choice["finish_reason"])
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError("openai-compatible", "request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderExecutionError("openai-compatible", str(exc)) from exc
+        yield StreamEnd(finish_reason=finish_reason, usage=usage, model=model_name)
 
     def embed(
         self, request: EmbeddingsRequest, model: str | None = None

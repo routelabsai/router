@@ -32,7 +32,16 @@ from routelabs_router.models import (
     RouterStatsResponse,
 )
 from routelabs_router.router import RouterEngine
-from routelabs_router.service import PRIVATE_MODEL_ALIASES, ChatService
+from routelabs_router.adapters.base import ProviderExecutionError
+from routelabs_router.service import (
+    PRIVATE_MODEL_ALIASES,
+    BufferedChatStream,
+    ChatService,
+    ChatStream,
+    build_anthropic_response,
+    build_responses_response,
+)
+from routelabs_router.streaming import TextDelta, ThinkingDelta, ToolCallDelta
 
 CONFIG_ENV_VAR = "ROUTELABS_CONFIG"
 
@@ -74,15 +83,15 @@ def create_app(
         request: ChatCompletionRequest, http_request: Request, response: Response
     ) -> ChatCompletionResponse | StreamingResponse:
         request = _apply_routing_headers(request, http_request)
-        result = chat_service.create_chat_completion(request)
-        headers = _route_headers(result.id, result.route, result.trace)
         if request.stream:
+            stream = chat_service.open_chat_stream(request, _stream_mode(http_request))
             include_usage = bool((request.stream_options or {}).get("include_usage"))
             return _event_stream(
-                _stream_chat_completion_chunks(result, include_usage=include_usage),
-                headers,
+                _stream_chat_completion_chunks(stream, include_usage=include_usage),
+                _stream_headers(stream.request_id, stream),
             )
-        response.headers.update(headers)
+        result = chat_service.create_chat_completion(request)
+        response.headers.update(_route_headers(result.id, result.route, result.trace))
         return result
 
     @app.post("/v1/responses", response_model=ResponsesResponse)
@@ -90,11 +99,14 @@ def create_app(
         request: ResponsesRequest, http_request: Request, response: Response
     ) -> ResponsesResponse | StreamingResponse:
         request = _apply_routing_headers(request, http_request)
-        result = chat_service.create_response(request)
-        headers = _route_headers(result.id, result.route, result.trace)
         if request.stream:
-            return _event_stream(_stream_responses_chunks(result), headers)
-        response.headers.update(headers)
+            stream = chat_service.open_response_stream(request, _stream_mode(http_request))
+            return _event_stream(
+                _stream_responses_chunks(stream),
+                _stream_headers(f"resp_{stream.request_id}", stream),
+            )
+        result = chat_service.create_response(request)
+        response.headers.update(_route_headers(result.id, result.route, result.trace))
         return result
 
     @app.post("/v1/messages", response_model=AnthropicMessagesResponse)
@@ -102,11 +114,14 @@ def create_app(
         request: AnthropicMessagesRequest, http_request: Request, response: Response
     ) -> AnthropicMessagesResponse | StreamingResponse:
         request = _apply_routing_headers(request, http_request)
-        result = chat_service.create_anthropic_message(request)
-        headers = _route_headers(result.id, result.route, result.trace)
         if request.stream:
-            return _event_stream(_stream_anthropic_messages(result), headers)
-        response.headers.update(headers)
+            stream = chat_service.open_anthropic_stream(request, _stream_mode(http_request))
+            return _event_stream(
+                _stream_anthropic_messages(stream),
+                _stream_headers(f"msg_{stream.request_id}", stream),
+            )
+        result = chat_service.create_anthropic_message(request)
+        response.headers.update(_route_headers(result.id, result.route, result.trace))
         return result
 
     @app.post("/v1/messages/count_tokens", response_model=AnthropicCountTokensResponse)
@@ -265,17 +280,21 @@ def _estimate_tokens(request: dict[str, Any]) -> int:
 # --------------------------------------------------------------------------
 # Streaming
 #
-# Providers are called without streaming so the verifier can inspect the full
-# answer before deciding whether to escalate. The response is then replayed as
-# a spec-shaped event stream. Text is chunked without changing a single
-# character, so code, indentation and Markdown survive intact.
+# Live streams forward provider tokens as they arrive. Buffered streams (used
+# when the verifier or a JSON schema must see the whole answer first) replay a
+# finished response through the same formatters, byte for byte.
 # --------------------------------------------------------------------------
 
-_CHUNK_PATTERN = re.compile(r"\s*\S+|\s+")
+
+def _stream_mode(http_request: Request) -> str | None:
+    value = http_request.headers.get("x-routelabs-stream")
+    return value.strip().lower() if value else None
 
 
-def _text_chunks(text: str) -> list[str]:
-    return _CHUNK_PATTERN.findall(text)
+def _stream_headers(response_id: str, stream: ChatStream) -> dict[str, str]:
+    headers = _route_headers(response_id, stream.route, stream.trace)
+    headers["x-routelabs-streaming"] = stream.mode
+    return headers
 
 
 def _sse(data: dict[str, Any], event: str | None = None) -> str:
@@ -291,15 +310,20 @@ def _event_stream(chunks: Iterator[str], headers: dict[str, str]) -> StreamingRe
     )
 
 
+def _known_input_tokens(stream: ChatStream) -> int:
+    if isinstance(stream, BufferedChatStream):
+        return stream.final().usage.prompt_tokens
+    return 0
+
+
 def _stream_chat_completion_chunks(
-    response: ChatCompletionResponse, include_usage: bool = False
+    stream: ChatStream, include_usage: bool = False
 ) -> Iterator[str]:
-    choice = response.choices[0]
     base = {
-        "id": response.id,
+        "id": stream.request_id,
         "object": "chat.completion.chunk",
-        "created": response.created,
-        "model": response.model,
+        "created": stream.created,
+        "model": stream.model,
     }
 
     def chunk(delta: dict[str, Any], finish_reason: str | None = None) -> str:
@@ -312,40 +336,34 @@ def _stream_chat_completion_chunks(
         return _sse(payload)
 
     yield chunk({"role": "assistant", "content": ""})
-    content = choice.message.content
-    text = content if isinstance(content, str) else ""
-    for piece in _text_chunks(text):
-        yield chunk({"content": piece})
-    for index, tool_call in enumerate(choice.message.tool_calls or []):
-        function = tool_call.get("function", {})
-        yield chunk(
-            {
-                "tool_calls": [
-                    {
-                        "index": index,
-                        "id": tool_call.get("id"),
-                        "type": tool_call.get("type", "function"),
-                        "function": {
-                            "name": function.get("name", ""),
-                            "arguments": _arguments_text(function.get("arguments")),
-                        },
-                    }
-                ]
-            }
-        )
-    yield chunk({}, finish_reason=choice.finish_reason)
+    try:
+        for event in stream.events():
+            if isinstance(event, TextDelta):
+                yield chunk({"content": event.text})
+            elif isinstance(event, ThinkingDelta):
+                # De facto field used by DeepSeek, vLLM and llama.cpp clients.
+                yield chunk({"reasoning_content": event.text})
+            elif isinstance(event, ToolCallDelta):
+                tool_call: dict[str, Any] = {"index": event.index}
+                function: dict[str, Any] = {"arguments": event.arguments}
+                if event.id:
+                    tool_call.update(id=event.id, type="function")
+                if event.name is not None:
+                    function["name"] = event.name
+                tool_call["function"] = function
+                yield chunk({"tool_calls": [tool_call]})
+    except ProviderExecutionError as exc:
+        yield _sse({"error": {"type": "provider_error", "message": exc.reason}})
+        yield "data: [DONE]\n\n"
+        return
+    final = stream.final()
+    yield chunk({}, finish_reason=final.choices[0].finish_reason)
     if include_usage:
-        yield _sse({**base, "choices": [], "usage": response.usage.model_dump()})
+        yield _sse({**base, "choices": [], "usage": final.usage.model_dump()})
     yield "data: [DONE]\n\n"
 
 
-def _arguments_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value if value is not None else {})
-
-
-def _stream_responses_chunks(response: ResponsesResponse) -> Iterator[str]:
+def _stream_responses_chunks(stream: ChatStream) -> Iterator[str]:
     sequence = 0
 
     def event(payload: dict[str, Any]) -> str:
@@ -354,62 +372,88 @@ def _stream_responses_chunks(response: ResponsesResponse) -> Iterator[str]:
         sequence += 1
         return _sse(payload, event=payload["type"])
 
-    final = response.model_dump()
-    in_progress = {**final, "status": "in_progress", "output": [], "output_text": ""}
+    response_id = f"resp_{stream.request_id}"
+    message_id = f"msg_{stream.request_id}"
+    in_progress = {
+        "id": response_id,
+        "object": "response",
+        "created_at": stream.created,
+        "status": "in_progress",
+        "model": stream.model,
+        "output": [],
+        "output_text": "",
+    }
     yield event({"type": "response.created", "response": in_progress})
     yield event({"type": "response.in_progress", "response": in_progress})
 
-    for output_index, item in enumerate(response.output):
-        item_data = item.model_dump()
-        if item.type == "message":
-            if not response.output_text:
-                continue
-            yield event(
-                {
-                    "type": "response.output_item.added",
-                    "output_index": output_index,
-                    "item": {**item_data, "status": "in_progress", "content": []},
-                }
-            )
-            empty_part = {"type": "output_text", "text": "", "annotations": []}
-            yield event(
-                {
-                    "type": "response.content_part.added",
-                    "item_id": item.id,
-                    "output_index": output_index,
-                    "content_index": 0,
-                    "part": empty_part,
-                }
-            )
-            for piece in _text_chunks(response.output_text):
+    empty_part = {"type": "output_text", "text": "", "annotations": []}
+    text_started = False
+    try:
+        for item in stream.events():
+            if not isinstance(item, TextDelta):
+                continue  # tool calls are emitted whole once the stream ends
+            if not text_started:
+                text_started = True
                 yield event(
                     {
-                        "type": "response.output_text.delta",
-                        "item_id": item.id,
-                        "output_index": output_index,
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {
+                            "id": message_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "in_progress",
+                            "content": [],
+                        },
+                    }
+                )
+                yield event(
+                    {
+                        "type": "response.content_part.added",
+                        "item_id": message_id,
+                        "output_index": 0,
                         "content_index": 0,
-                        "delta": piece,
+                        "part": empty_part,
                     }
                 )
             yield event(
                 {
-                    "type": "response.output_text.done",
-                    "item_id": item.id,
-                    "output_index": output_index,
+                    "type": "response.output_text.delta",
+                    "item_id": message_id,
+                    "output_index": 0,
                     "content_index": 0,
-                    "text": response.output_text,
+                    "delta": item.text,
                 }
             )
-            yield event(
+    except ProviderExecutionError as exc:
+        yield event({"type": "error", "code": "provider_error", "message": exc.reason})
+        yield "data: [DONE]\n\n"
+        return
+
+    final = build_responses_response(stream.final())
+    for output_index, output_item in enumerate(final.output):
+        item_data = output_item.model_dump()
+        if output_item.type == "message":
+            if not text_started:
+                continue
+            for done in (
+                {
+                    "type": "response.output_text.done",
+                    "item_id": message_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "text": final.output_text,
+                },
                 {
                     "type": "response.content_part.done",
-                    "item_id": item.id,
+                    "item_id": message_id,
                     "output_index": output_index,
                     "content_index": 0,
-                    "part": {**empty_part, "text": response.output_text},
-                }
-            )
-        elif item.type == "function_call":
+                    "part": {**empty_part, "text": final.output_text},
+                },
+            ):
+                yield event(done)
+        elif output_item.type == "function_call":
             yield event(
                 {
                     "type": "response.output_item.added",
@@ -420,7 +464,7 @@ def _stream_responses_chunks(response: ResponsesResponse) -> Iterator[str]:
             yield event(
                 {
                     "type": "response.function_call_arguments.delta",
-                    "item_id": item.id,
+                    "item_id": output_item.id,
                     "output_index": output_index,
                     "delta": item_data.get("arguments", ""),
                 }
@@ -428,7 +472,7 @@ def _stream_responses_chunks(response: ResponsesResponse) -> Iterator[str]:
             yield event(
                 {
                     "type": "response.function_call_arguments.done",
-                    "item_id": item.id,
+                    "item_id": output_item.id,
                     "output_index": output_index,
                     "call_id": item_data.get("call_id"),
                     "name": item_data.get("name"),
@@ -445,66 +489,116 @@ def _stream_responses_chunks(response: ResponsesResponse) -> Iterator[str]:
             }
         )
 
-    yield event({"type": "response.completed", "response": final})
+    yield event({"type": "response.completed", "response": final.model_dump()})
     yield "data: [DONE]\n\n"
 
 
-def _stream_anthropic_messages(response: AnthropicMessagesResponse) -> Iterator[str]:
-    started = response.model_dump()
-    started.update(
-        content=[],
-        stop_reason=None,
-        stop_sequence=None,
-        usage={"input_tokens": response.usage.input_tokens, "output_tokens": 0},
-    )
-    yield _sse({"type": "message_start", "message": started}, event="message_start")
-    for index, block in enumerate(response.content):
-        block_type = block.get("type")
-        if block_type == "text":
-            start_block: dict[str, Any] = {"type": "text", "text": ""}
-        elif block_type == "tool_use":
-            start_block = {**block, "input": {}}
-        else:
-            start_block = block
-        yield _sse(
-            {"type": "content_block_start", "index": index, "content_block": start_block},
-            event="content_block_start",
-        )
-        if block_type == "text":
-            for piece in _text_chunks(str(block.get("text", ""))):
-                yield _sse(
-                    {
-                        "type": "content_block_delta",
-                        "index": index,
-                        "delta": {"type": "text_delta", "text": piece},
-                    },
-                    event="content_block_delta",
-                )
-        elif block_type == "tool_use":
+def _stream_anthropic_messages(stream: ChatStream) -> Iterator[str]:
+    message = {
+        "id": f"msg_{stream.request_id}",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": stream.model,
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": _known_input_tokens(stream), "output_tokens": 0},
+    }
+    yield _sse({"type": "message_start", "message": message}, event="message_start")
+
+    block_index = 0
+    open_kind: str | None = None  # "thinking" or "text"
+
+    def close_block() -> Iterator[str]:
+        nonlocal block_index, open_kind
+        if open_kind == "thinking":
             yield _sse(
                 {
                     "type": "content_block_delta",
-                    "index": index,
-                    "delta": {
-                        "type": "input_json_delta",
-                        "partial_json": json.dumps(block.get("input", {})),
-                    },
+                    "index": block_index,
+                    "delta": {"type": "signature_delta", "signature": ""},
                 },
                 event="content_block_delta",
             )
-        yield _sse({"type": "content_block_stop", "index": index}, event="content_block_stop")
+        if open_kind is not None:
+            yield _sse(
+                {"type": "content_block_stop", "index": block_index},
+                event="content_block_stop",
+            )
+            block_index += 1
+            open_kind = None
+
+    try:
+        for item in stream.events():
+            if isinstance(item, ThinkingDelta):
+                kind, delta = "thinking", {"type": "thinking_delta", "thinking": item.text}
+                start_block = {"type": "thinking", "thinking": "", "signature": ""}
+            elif isinstance(item, TextDelta):
+                kind, delta = "text", {"type": "text_delta", "text": item.text}
+                start_block = {"type": "text", "text": ""}
+            else:
+                continue  # tool_use blocks are emitted whole once the stream ends
+            if open_kind != kind:
+                yield from close_block()
+                open_kind = kind
+                yield _sse(
+                    {
+                        "type": "content_block_start",
+                        "index": block_index,
+                        "content_block": start_block,
+                    },
+                    event="content_block_start",
+                )
+            yield _sse(
+                {"type": "content_block_delta", "index": block_index, "delta": delta},
+                event="content_block_delta",
+            )
+    except ProviderExecutionError as exc:
+        yield _sse(
+            {"type": "error", "error": {"type": "api_error", "message": exc.reason}},
+            event="error",
+        )
+        return
+
+    yield from close_block()
+
+    final = build_anthropic_response(stream.final())
+    for block in final.content:
+        if block.get("type") != "tool_use":
+            continue
+        yield _sse(
+            {
+                "type": "content_block_start",
+                "index": block_index,
+                "content_block": {**block, "input": {}},
+            },
+            event="content_block_start",
+        )
+        yield _sse(
+            {
+                "type": "content_block_delta",
+                "index": block_index,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": json.dumps(block.get("input", {})),
+                },
+            },
+            event="content_block_delta",
+        )
+        yield _sse({"type": "content_block_stop", "index": block_index}, event="content_block_stop")
+        block_index += 1
+
     yield _sse(
         {
             "type": "message_delta",
-            "delta": {
-                "stop_reason": response.stop_reason,
-                "stop_sequence": response.stop_sequence,
+            "delta": {"stop_reason": final.stop_reason, "stop_sequence": final.stop_sequence},
+            "usage": {
+                "input_tokens": final.usage.input_tokens,
+                "output_tokens": final.usage.output_tokens,
             },
-            "usage": {"output_tokens": response.usage.output_tokens},
         },
         event="message_delta",
     )
     yield _sse({"type": "message_stop"}, event="message_stop")
-
 
 app = create_app()

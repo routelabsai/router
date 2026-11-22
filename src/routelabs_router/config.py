@@ -3,6 +3,7 @@ from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class ProviderConfig(BaseModel):
@@ -41,10 +42,20 @@ class ServerConfig(BaseModel):
     api_key_env: str | None = "ROUTELABS_API_KEY"
 
 
+StreamingMode = Literal["auto", "realtime", "buffered"]
+
+
 class RoutingConfig(BaseModel):
     default_mode: str
     escalate_on_verification_failure: bool
     prefer_local_for_private: bool
+    # auto: stream tokens live whenever verification could not change the
+    #   outcome (cloud routes, private or no-fallback requests, unverified
+    #   routes); buffer otherwise so a weak local answer can still escalate.
+    # realtime: always stream live; verification is recorded afterwards but
+    #   cannot escalate once output has started.
+    # buffered: always wait for the full answer, then replay it.
+    streaming: StreamingMode = "auto"
 
 
 class AgentRouteConfig(BaseModel):

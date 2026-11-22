@@ -1,5 +1,7 @@
+import itertools
 import json
 import re
+from collections.abc import Iterator
 import time
 import uuid
 
@@ -15,6 +17,11 @@ from routelabs_router.adapters.anthropic import AnthropicChatAdapter
 from routelabs_router.adapters.ollama import OllamaChatAdapter
 from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import Config
+from routelabs_router.streaming import (
+    StreamAccumulator,
+    StreamEvent,
+    events_from_completion,
+)
 from routelabs_router.models import (
     content_has_non_text,
     content_text,
@@ -204,6 +211,231 @@ class ChatService:
             auto_private=privacy.detected and not request.private,
         )
         return response
+
+    def open_chat_stream(
+        self, request: ChatCompletionRequest, mode: str | None = None
+    ) -> "ChatStream":
+        """Start a streamed chat completion.
+
+        Returns a live stream when tokens can be forwarded as they are
+        generated, or a buffered replay when the response has to be verified
+        (or validated against a schema) before the client may see it.
+        """
+        mode = mode or self.config.routing.streaming
+        if mode not in {"auto", "realtime", "buffered"}:
+            raise HTTPException(
+                status_code=400,
+                detail="streaming mode must be auto, realtime or buffered",
+            )
+        if mode == "buffered" or request.response_format is not None:
+            return BufferedChatStream(self.create_chat_completion(request))
+
+        started = time.perf_counter()
+        request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+        task = _task_from_messages(request)
+        preflight = self.policy_engine.evaluate(task, explicitly_private=request.private)
+        privacy = preflight.privacy
+        effective_private = request.private or privacy.forced_local
+        requested_model = _requested_model_override(request.model)
+        initial_route = self._align_cloud_route(
+            self.router.decide(_route_request_from_chat(request, task, effective_private)),
+            requested_model,
+        )
+        can_escalate = request.allow_fallbacks and not effective_private
+        needs_verification = initial_route.verify and initial_route.target == "local"
+        if mode == "auto" and needs_verification and can_escalate:
+            return BufferedChatStream(self.create_chat_completion(request))
+
+        trace = DecisionTrace(
+            privacy=privacy,
+            agent_tools=initial_route.agent_tools,
+            initial_route=initial_route,
+            final_route=initial_route,
+        )
+        events = self._open_stream_or_fallback(
+            request=request,
+            route=initial_route,
+            trace=trace,
+            requested_model=requested_model,
+            allow_cross_target_fallback=can_escalate,
+        )
+        return LiveChatStream(
+            service=self,
+            request=request,
+            request_id=request_id,
+            task=task,
+            trace=trace,
+            events=events,
+            started=started,
+            effective_private=effective_private,
+            auto_private=privacy.detected and not request.private,
+            verify=needs_verification,
+            can_escalate=can_escalate,
+        )
+
+    def _open_stream_or_fallback(
+        self,
+        request: ChatCompletionRequest,
+        route: RouteDecision,
+        trace: DecisionTrace,
+        requested_model: str | None,
+        allow_cross_target_fallback: bool,
+    ) -> Iterator[StreamEvent]:
+        try:
+            return self._open_stream(request, route, trace, requested_model)
+        except HTTPException:
+            if not allow_cross_target_fallback or route.target != "local":
+                raise
+        fallback_route = self._cloud_route(
+            route.complexity,
+            agent_tools=trace.agent_tools,
+            agent_role=route.agent_role,
+            requested_model=requested_model,
+        )
+        trace.escalated = True
+        trace.escalation_reason = "local provider was unavailable, falling back to cloud"
+        trace.final_route = fallback_route
+        return self._open_stream(request, fallback_route, trace, requested_model)
+
+    def _open_stream(
+        self,
+        request: ChatCompletionRequest,
+        route: RouteDecision,
+        trace: DecisionTrace,
+        requested_model: str | None,
+    ) -> Iterator[StreamEvent]:
+        """Connect to the provider and wait for its first event, so that
+        connection failures can still fall back before any byte is sent."""
+        if route.target == "cloud" and not self._max_cloud_cost_allows_request(
+            request.max_cloud_cost_usd
+        ):
+            raise self._max_cloud_cost_error(request.max_cloud_cost_usd or 0)
+        if route.target == "cloud" and not self._cloud_budget_allows_request():
+            raise self._cloud_budget_error()
+        provider = self.providers.get(route.provider)
+        if provider is None:
+            raise HTTPException(
+                status_code=501, detail=f"provider '{route.provider}' is not configured"
+            )
+        model_name = (
+            requested_model
+            if requested_model and self._provider_accepts_model(route.provider, requested_model)
+            else route.model
+        )
+        provider_request = _chat_request_for_route_with_redaction(
+            request=request,
+            route=route,
+            trace=trace,
+            strip_pii=self._should_strip_pii_for_cloud(request.strip_pii),
+        )
+        retries = max(1, self._provider_retries(route.provider))
+        last_error = "unknown error"
+        for attempt_number in range(1, retries + 1):
+            attempt_started = time.perf_counter()
+            try:
+                if hasattr(provider, "stream"):
+                    iterator = iter(provider.stream(provider_request, model=model_name))
+                else:
+                    result = provider.complete(provider_request, model=model_name)
+                    iterator = events_from_completion(
+                        result.content,
+                        result.tool_calls,
+                        result.finish_reason,
+                        result.usage,
+                        result.model,
+                    )
+                first = next(iterator, None)
+            except ProviderExecutionError as exc:
+                last_error = exc.reason
+                trace.attempts.append(
+                    ProviderAttempt(
+                        provider=route.provider,
+                        model=model_name,
+                        target=route.target,
+                        outcome="failure",
+                        reason=f"attempt {attempt_number}: {exc.reason}",
+                        duration_ms=_elapsed_ms(attempt_started),
+                    )
+                )
+                continue
+            trace.attempts.append(
+                ProviderAttempt(
+                    provider=route.provider,
+                    model=model_name,
+                    target=route.target,
+                    outcome="success",
+                    reason=f"attempt {attempt_number} (streaming)",
+                    duration_ms=_elapsed_ms(attempt_started),
+                )
+            )
+            return itertools.chain([first] if first is not None else [], iterator)
+
+        status_code = 502 if route.target == "cloud" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"{route.provider} failed after {retries} attempt(s): {last_error}",
+        )
+
+    def _finish_stream(self, stream: "LiveChatStream", result: ProviderResult) -> ChatCompletionResponse:
+        trace = stream.trace
+        if stream.verify and trace.final_route.target == "local" and not result.tool_calls:
+            verification = self.verifier.evaluate(
+                task=stream.task,
+                complexity=trace.initial_route.complexity,
+                result=result,
+            )
+            trace.verification = verification
+            if verification.should_escalate:
+                if not stream.can_escalate:
+                    trace.escalation_reason = (
+                        "verification requested escalation but privacy policy forced "
+                        "local execution"
+                        if stream.effective_private
+                        else "verification requested escalation but request disabled fallbacks"
+                    )
+                else:
+                    trace.escalation_reason = (
+                        "verification flagged the response, but realtime streaming "
+                        "cannot escalate after output has started"
+                    )
+        response = _build_chat_response(
+            request_id=stream.request_id,
+            route=trace.final_route,
+            result=result,
+            trace=trace,
+        )
+        total_latency_ms = _elapsed_ms(stream.started)
+        tokens_per_second = _completion_tokens_per_second(
+            response.usage.completion_tokens, total_latency_ms
+        )
+        trace.total_latency_ms = total_latency_ms
+        trace.completion_tokens_per_second = tokens_per_second
+        trace.summary = _build_decision_summary(trace)
+        record_fields = dict(
+            request_id=stream.request_id,
+            request_kind="chat",
+            task_preview=_task_preview(stream.task),
+            trace=trace,
+            is_private=stream.effective_private,
+            auto_private=stream.auto_private,
+        )
+        self.telemetry.record(
+            **record_fields,
+            total_latency_ms=total_latency_ms,
+            completion_tokens_per_second=tokens_per_second,
+        )
+        self.route_tracer.record(**record_fields)
+        return response
+
+    def open_response_stream(
+        self, request: ResponsesRequest, mode: str | None = None
+    ) -> "ChatStream":
+        return self.open_chat_stream(_responses_request_to_chat_request(request), mode)
+
+    def open_anthropic_stream(
+        self, request: AnthropicMessagesRequest, mode: str | None = None
+    ) -> "ChatStream":
+        return self.open_chat_stream(_anthropic_request_to_chat_request(request), mode)
 
     def create_response(self, request: ResponsesRequest) -> ResponsesResponse:
         chat_request = _responses_request_to_chat_request(request)
@@ -2065,3 +2297,111 @@ def _validate_json_schema_value(
             return f"{path} expected value < {exclusive_maximum}"
 
     return None
+
+
+class ChatStream:
+    """A streamed chat completion: events now, the full response at the end."""
+
+    mode: str
+    request_id: str
+    created: int
+    model: str
+    route: RouteDecision
+    trace: DecisionTrace
+
+    def events(self) -> Iterator[StreamEvent]:
+        raise NotImplementedError
+
+    def final(self) -> ChatCompletionResponse:
+        """The complete response; available once `events()` is exhausted."""
+        raise NotImplementedError
+
+
+class BufferedChatStream(ChatStream):
+    mode = "buffered"
+
+    def __init__(self, response: ChatCompletionResponse) -> None:
+        self._response = response
+        self.request_id = response.id
+        self.created = response.created
+        self.model = response.model
+        self.route = response.route
+        self.trace = response.trace
+
+    def events(self) -> Iterator[StreamEvent]:
+        choice = self._response.choices[0]
+        content = choice.message.content
+        return events_from_completion(
+            content if isinstance(content, str) else content_text(content),
+            choice.message.tool_calls,
+            choice.finish_reason,
+            self._response.usage.model_dump(),
+            self._response.model,
+        )
+
+    def final(self) -> ChatCompletionResponse:
+        return self._response
+
+
+class LiveChatStream(ChatStream):
+    mode = "realtime"
+
+    def __init__(
+        self,
+        service: ChatService,
+        request: ChatCompletionRequest,
+        request_id: str,
+        task: str,
+        trace: DecisionTrace,
+        events: Iterator[StreamEvent],
+        started: float,
+        effective_private: bool,
+        auto_private: bool,
+        verify: bool,
+        can_escalate: bool,
+    ) -> None:
+        self._service = service
+        self._events = events
+        self._response: ChatCompletionResponse | None = None
+        self.request = request
+        self.request_id = request_id
+        self.created = int(time.time())
+        self.task = task
+        self.trace = trace
+        self.route = trace.final_route
+        self.model = trace.final_route.model
+        self.started = started
+        self.effective_private = effective_private
+        self.auto_private = auto_private
+        self.verify = verify
+        self.can_escalate = can_escalate
+
+    def events(self) -> Iterator[StreamEvent]:
+        accumulator = StreamAccumulator()
+        for event in self._events:
+            accumulator.feed(event)
+            yield event
+        result = ProviderResult(
+            content=accumulator.content,
+            model=accumulator.model or self.model,
+            finish_reason=accumulator.resolved_finish_reason,
+            usage=accumulator.usage
+            or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            tool_calls=accumulator.tool_calls,
+        )
+        self._response = self._service._finish_stream(self, result)
+
+    def final(self) -> ChatCompletionResponse:
+        if self._response is None:
+            raise RuntimeError("stream has not finished")
+        return self._response
+
+
+def build_responses_response(chat_response: ChatCompletionResponse) -> ResponsesResponse:
+    return _build_responses_response(chat_response)
+
+
+def build_anthropic_response(
+    chat_response: ChatCompletionResponse,
+) -> AnthropicMessagesResponse:
+    return _build_anthropic_response(chat_response)

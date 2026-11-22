@@ -1,11 +1,20 @@
 import json
 import re
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
+from routelabs_router.streaming import (
+    StreamEnd,
+    StreamEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallDelta,
+    iter_sse_data,
+)
 from routelabs_router.models import (
     ChatCompletionRequest,
     ChatMessage,
@@ -19,6 +28,15 @@ class AnthropicChatAdapter:
         self.config = config
         self.timeout = config.timeout_seconds
 
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+        if self.config.api_key:
+            headers["x-api-key"] = self.config.api_key
+        return headers
+
     def complete(
         self, request: ChatCompletionRequest, model: str | None = None
     ) -> ProviderResult:
@@ -26,19 +44,12 @@ class AnthropicChatAdapter:
             request=request,
             model=model or request.model or self.config.model,
         )
-        headers = {
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-        if self.config.api_key:
-            headers["x-api-key"] = self.config.api_key
-
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
                     f"{self.config.base_url.rstrip('/')}/messages",
                     json=payload,
-                    headers=headers,
+                    headers=self._headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -54,6 +65,90 @@ class AnthropicChatAdapter:
             usage=_extract_usage(data),
             tool_calls=_extract_tool_calls(data),
             raw=data,
+        )
+
+    def stream(
+        self, request: ChatCompletionRequest, model: str | None = None
+    ) -> Iterator[StreamEvent]:
+        payload = _build_anthropic_payload(
+            request=request,
+            model=model or request.model or self.config.model,
+        )
+        payload["stream"] = True
+        model_name = str(payload["model"])
+        tool_indexes: dict[int, int] = {}
+        stop_reason = "end_turn"
+        input_tokens = 0
+        output_tokens = 0
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self.config.base_url.rstrip('/')}/messages",
+                    json=payload,
+                    headers=self._headers(),
+                ) as response:
+                    if response.status_code >= 400:
+                        response.read()
+                        raise ProviderExecutionError(
+                            "anthropic", f"HTTP {response.status_code}: {response.text[:300]}"
+                        )
+                    for data in iter_sse_data(response.iter_lines()):
+                        try:
+                            event = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        event_type = event.get("type")
+                        if event_type == "error":
+                            raise ProviderExecutionError(
+                                "anthropic", str(event.get("error"))[:300]
+                            )
+                        if event_type == "message_start":
+                            message = event.get("message") or {}
+                            model_name = str(message.get("model") or model_name)
+                            usage = message.get("usage") or {}
+                            input_tokens = int(usage.get("input_tokens", 0) or 0)
+                        elif event_type == "content_block_start":
+                            block = event.get("content_block") or {}
+                            if block.get("type") == "tool_use":
+                                tool_index = len(tool_indexes)
+                                tool_indexes[int(event.get("index", 0))] = tool_index
+                                yield ToolCallDelta(
+                                    index=tool_index,
+                                    id=block.get("id"),
+                                    name=block.get("name"),
+                                )
+                        elif event_type == "content_block_delta":
+                            delta = event.get("delta") or {}
+                            if delta.get("type") == "text_delta" and delta.get("text"):
+                                yield TextDelta(str(delta["text"]))
+                            elif delta.get("type") == "thinking_delta" and delta.get("thinking"):
+                                yield ThinkingDelta(str(delta["thinking"]))
+                            elif delta.get("type") == "input_json_delta":
+                                block_index = int(event.get("index", 0))
+                                if block_index in tool_indexes:
+                                    yield ToolCallDelta(
+                                        index=tool_indexes[block_index],
+                                        arguments=str(delta.get("partial_json") or ""),
+                                    )
+                        elif event_type == "message_delta":
+                            delta = event.get("delta") or {}
+                            stop_reason = str(delta.get("stop_reason") or stop_reason)
+                            usage = event.get("usage") or {}
+                            output_tokens = int(usage.get("output_tokens", output_tokens) or 0)
+                            input_tokens = int(usage.get("input_tokens", input_tokens) or 0)
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError("anthropic", "request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderExecutionError("anthropic", str(exc)) from exc
+        yield StreamEnd(
+            finish_reason=_STOP_REASON_TO_FINISH_REASON.get(stop_reason, stop_reason),
+            usage={
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            },
+            model=model_name,
         )
 
 
