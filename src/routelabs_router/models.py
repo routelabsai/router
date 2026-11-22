@@ -49,7 +49,9 @@ class RouteDecision(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str
-    content: str | None = None
+    # Either a plain string or OpenAI-style content parts, e.g.
+    # [{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {...}}].
+    content: str | list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
     name: str | None = None
     tool_name: str | None = None
@@ -71,10 +73,16 @@ class ChatCompletionRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
+    max_completion_tokens: int | None = None
+    stream_options: dict[str, Any] | None = None
     stop: str | list[str] | None = None
     seed: int | None = None
     frequency_penalty: float | None = None
     presence_penalty: float | None = None
+
+    @property
+    def output_token_limit(self) -> int | None:
+        return self.max_completion_tokens or self.max_tokens
 
 
 class ResponsesTextConfig(BaseModel):
@@ -203,7 +211,7 @@ class AnthropicMessagesRequest(BaseModel):
     model: str | None = None
     agent_role: str | None = None
     system: str | list[dict[str, Any]] | None = None
-    max_tokens: int = 1024
+    max_tokens: int = 16000
     private: bool = False
     allow_fallbacks: bool = True
     max_cloud_cost_usd: float | None = Field(default=None, ge=0)
@@ -214,6 +222,10 @@ class AnthropicMessagesRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     stop_sequences: list[str] | None = None
+
+
+class AnthropicCountTokensResponse(BaseModel):
+    input_tokens: int
 
 
 class AnthropicUsage(BaseModel):
@@ -431,3 +443,28 @@ def _safe_ratio(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0
     return round(numerator / denominator, 3)
+
+
+def content_text(content: str | list[dict[str, Any]] | None) -> str:
+    """Return the text portion of a message content value."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def content_has_non_text(content: str | list[dict[str, Any]] | None) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(part, dict) and part.get("type") not in {"text", "input_text", "output_text"}
+        for part in content
+    )

@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+Client compatibility (found by pointing real SDKs and agent tools at the router):
+
+- fix `router start --reload`, the README quickstart command, which exited immediately because uvicorn cannot reload an app object
+- accept OpenAI content-part arrays (`[{"type": "text", ...}, {"type": "image_url", ...}]`) instead of rejecting them with a 422, and forward images to Anthropic and Ollama
+- preserve Anthropic image blocks instead of silently dropping them
+- stream text without changing it; streaming previously collapsed newlines and indentation, which broke code output
+- emit spec-shaped stream events so the official OpenAI and Anthropic SDK accumulators no longer double text, crash on tool-call deltas, or reject duplicate Responses output items
+- support Responses API `function_call` / `function_call_output` input items and flat function tools, so multi-turn agent tool loops work on `/v1/responses`
+- add `POST /v1/messages/count_tokens` (estimated) for Claude Code and Anthropic SDK clients
+- stop forwarding vendor model names such as `claude-sonnet-5-5` to local providers; prefer the Anthropic provider for `claude-*` and the OpenAI provider for `gpt-*` / `o*` when escalating
+- add `x-routelabs-*` request headers and the `routelabs/private` model alias for routing control, and `x-routelabs-*` response headers describing the decision
+- add optional API-key auth through `ROUTELABS_API_KEY`, plus a startup warning when binding a public host without it
+- accept `developer` messages (mapped to `system` for Anthropic, Ollama and local OpenAI-compatible servers), `max_completion_tokens`, and `stream_options.include_usage`
+- map stop reasons correctly in both directions (`max_tokens` ⇄ `length`, `end_turn` ⇄ `stop`, `refusal` ⇄ `content_filter`)
+- adapt to current model APIs: drop sampling parameters and send `max_completion_tokens` for OpenAI reasoning models, drop sampling parameters and downgrade forced `tool_choice` for Claude models that reject them, and raise the Anthropic default `max_tokens` from 1024 to 16000
+- update default cloud models to `gpt-5-mini` and `claude-sonnet-5-5`
+- report the installed package version from the API instead of a hard-coded `0.3.0`
 
 - add a packaged synthetic privacy benchmark with detection accuracy, category-level precision/recall, near-miss cases, JSON output, and CI failure support
 - detect environment-style API keys, tokens, secrets, and passwords as sensitive content before routing
