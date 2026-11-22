@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from importlib.resources import files
 from pathlib import Path
 
@@ -274,15 +275,42 @@ def main() -> None:
     elif args.command == "start":
         config = load_config(Path(args.config))
         _print_startup_status(config)
-        from routelabs_router.server.app import create_app
+        host = args.host or config.server.host
+        _warn_if_exposed_without_auth(config, host)
+        if args.reload:
+            # uvicorn can only reload an import string, not an app object.
+            from routelabs_router.server.app import CONFIG_ENV_VAR
 
-        app = create_app(Path(args.config))
-        uvicorn.run(
-            app,
-            host=args.host or config.server.host,
-            port=args.port or config.server.port,
-            reload=args.reload,
-        )
+            os.environ[CONFIG_ENV_VAR] = str(Path(args.config).resolve())
+            uvicorn.run(
+                "routelabs_router.server.app:create_app_from_env",
+                factory=True,
+                host=host,
+                port=args.port or config.server.port,
+                reload=True,
+            )
+        else:
+            from routelabs_router.server.app import create_app
+
+            uvicorn.run(
+                create_app(Path(args.config)),
+                host=host,
+                port=args.port or config.server.port,
+                reload=False,
+            )
+
+
+def _warn_if_exposed_without_auth(config, host: str) -> None:
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return
+    env_name = config.server.api_key_env
+    if env_name and os.environ.get(env_name):
+        return
+    print(
+        f"WARNING: listening on {host} without authentication. Anyone who can reach "
+        f"this port can spend your cloud credits. Set {env_name or 'ROUTELABS_API_KEY'} "
+        "to require an API key."
+    )
 
 
 def _print_startup_status(config) -> None:
@@ -516,7 +544,7 @@ def _print_quickstart(service: ChatService, config) -> None:
 
     print("3. Anthropic-compatible client setup")
     print("   Base URL: http://127.0.0.1:8000")
-    print("   Model: claude-sonnet-4-20250514 or route-auto")
+    print("   Model: claude-sonnet-5-5 or route-auto")
     print("   Example endpoint: /v1/messages")
     print("")
 

@@ -36,6 +36,9 @@ class ProvidersConfig(BaseModel):
 class ServerConfig(BaseModel):
     host: str
     port: int
+    # When this environment variable is set, every /v1/* request must send
+    # its value as `Authorization: Bearer <key>` or `x-api-key: <key>`.
+    api_key_env: str | None = "ROUTELABS_API_KEY"
 
 
 class RoutingConfig(BaseModel):
@@ -211,13 +214,13 @@ DEFAULT_CONFIG = Config.model_validate(
                 "default": "openai-compatible",
                 "openai_compatible": {
                     "base_url": "https://api.openai.com/v1",
-                    "model": "gpt-4.1-mini",
+                    "model": "gpt-5-mini",
                     "embedding_model": "text-embedding-3-small",
                     "api_key_env": "OPENAI_API_KEY",
                 },
                 "anthropic": {
                     "base_url": "https://api.anthropic.com/v1",
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-5-5",
                     "api_key_env": "ANTHROPIC_API_KEY",
                 },
             },

@@ -5,6 +5,7 @@ import httpx
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
+from routelabs_router.models import content_text
 from routelabs_router.models import (
     ChatCompletionRequest,
     ChatMessage,
@@ -175,8 +176,14 @@ def _map_ollama_format(response_format: dict[str, Any] | None) -> str | dict[str
 
 
 def _serialize_ollama_message(message: ChatMessage) -> dict[str, Any]:
-    payload: dict[str, Any] = {"role": message.role}
-    if message.content is not None:
+    role = "system" if message.role == "developer" else message.role
+    payload: dict[str, Any] = {"role": role}
+    if isinstance(message.content, list):
+        payload["content"] = content_text(message.content)
+        images = _images_from_parts(message.content)
+        if images:
+            payload["images"] = images
+    elif message.content is not None:
         payload["content"] = message.content
     if message.tool_calls is not None:
         payload["tool_calls"] = [
@@ -201,3 +208,16 @@ def _extract_usage(data: dict[str, Any]) -> dict[str, int]:
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
     }
+
+
+def _images_from_parts(parts: list[dict[str, Any]]) -> list[str]:
+    """Ollama takes raw base64 images, so only data URLs can be forwarded."""
+    images: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict) or part.get("type") != "image_url":
+            continue
+        image_url = part.get("image_url")
+        url = image_url.get("url") if isinstance(image_url, dict) else image_url
+        if isinstance(url, str) and url.startswith("data:") and "," in url:
+            images.append(url.split(",", 1)[1])
+    return images

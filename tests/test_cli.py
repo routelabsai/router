@@ -162,10 +162,12 @@ def test_route_command_rejects_malformed_tool_description(monkeypatch) -> None:
 def test_start_command_allows_overrides(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_run(app, host, port, reload) -> None:
+    def fake_run(app, host, port, reload, factory=False) -> None:
+        captured["app"] = app
         captured["host"] = host
         captured["port"] = port
         captured["reload"] = reload
+        captured["factory"] = factory
 
     class FakeService:
         def __init__(self, config) -> None:
@@ -210,6 +212,9 @@ def test_start_command_allows_overrides(monkeypatch) -> None:
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 9000
     assert captured["reload"] is True
+    # uvicorn refuses to reload an app object, so --reload must use a factory.
+    assert captured["app"] == "routelabs_router.server.app:create_app_from_env"
+    assert captured["factory"] is True
 
 
 def test_start_command_prints_actionable_startup_warnings(
