@@ -16,6 +16,8 @@ from routelabs_router.adapters.ollama import OllamaChatAdapter
 from routelabs_router.adapters.openai_compatible import OpenAICompatibleChatAdapter
 from routelabs_router.config import Config
 from routelabs_router.models import (
+    content_has_non_text,
+    content_text,
     AgentToolTrace,
     AnthropicMessagesRequest,
     AnthropicMessagesResponse,
@@ -99,8 +101,10 @@ class ChatService:
         )
         privacy = preflight.privacy
         effective_private = request.private or privacy.forced_local
-        initial_route = self.router.decide(
-            _route_request_from_chat(request, task, effective_private)
+        requested_model = _requested_model_override(request.model)
+        initial_route = self._align_cloud_route(
+            self.router.decide(_route_request_from_chat(request, task, effective_private)),
+            requested_model,
         )
         trace = DecisionTrace(
             privacy=privacy,
@@ -108,7 +112,6 @@ class ChatService:
             initial_route=initial_route,
             final_route=initial_route,
         )
-        requested_model = _requested_model_override(request.model)
         result = self._execute_route_or_fallback(
             request=request,
             route=initial_route,
@@ -139,6 +142,7 @@ class ChatService:
                     initial_route.complexity,
                     agent_tools=trace.agent_tools,
                     agent_role=initial_route.agent_role,
+                    requested_model=requested_model,
                 )
                 trace.escalated = True
                 trace.escalation_reason = verification.reason
@@ -649,17 +653,62 @@ class ChatService:
         complexity: str,
         agent_tools: AgentToolTrace | None = None,
         agent_role: str | None = None,
+        requested_model: str | None = None,
     ) -> RouteDecision:
+        provider = self._preferred_cloud_provider(requested_model)
         return RouteDecision(
             target="cloud",
-            provider=self.config.providers.cloud.default,
-            model=self._provider_model_for_name(self.config.providers.cloud.default),
+            provider=provider,
+            model=self._provider_model_for_name(provider),
             reason="verification requested escalation to a stronger remote model",
             complexity=complexity,
             verify=False,
             agent_role=agent_role,
             agent_tools=agent_tools,
         )
+
+    def _preferred_cloud_provider(self, requested_model: str | None) -> str:
+        """Send `claude-*` to Anthropic and `gpt-*` to OpenAI when both exist."""
+        default = self.config.providers.cloud.default
+        family = _model_family(requested_model)
+        if family == "anthropic" and "anthropic" in self.providers:
+            return "anthropic"
+        if family == "openai" and "openai-compatible" in self.providers:
+            return "openai-compatible"
+        return default
+
+    def _align_cloud_route(
+        self, route: RouteDecision, requested_model: str | None
+    ) -> RouteDecision:
+        if route.target != "cloud" or requested_model is None:
+            return route
+        provider = self._preferred_cloud_provider(requested_model)
+        if provider == route.provider:
+            return route
+        return route.model_copy(
+            update={"provider": provider, "model": self._provider_model_for_name(provider)}
+        )
+
+    def _provider_accepts_model(self, provider_name: str, model: str) -> bool:
+        """Whether a client-requested model name makes sense for a provider.
+
+        Clients such as Claude Code or Codex always send a vendor model name.
+        Forwarding `claude-sonnet-5-5` to Ollama would fail, so vendor names
+        only apply to the matching cloud provider (or an OpenAI-compatible
+        proxy such as LiteLLM when no direct Anthropic provider exists).
+        Unrecognized names (`qwen3:4b`, `llama3.3`) pass through unchanged.
+        """
+        family = _model_family(model)
+        if family is None:
+            return True
+        if family == "openai":
+            return provider_name == "openai-compatible"
+        if provider_name == "anthropic":
+            return True
+        if provider_name == "openai-compatible" and "anthropic" not in self.providers:
+            base_url = self.config.providers.cloud.openai_compatible.base_url
+            return "api.openai.com" not in base_url
+        return False
 
     def get_stats(self):
         return self.telemetry.snapshot()
@@ -838,6 +887,7 @@ class ChatService:
                 route.complexity,
                 agent_tools=trace.agent_tools,
                 agent_role=route.agent_role,
+                requested_model=requested_model,
             )
             trace.escalated = True
             trace.escalation_reason = "local provider was unavailable, falling back to cloud"
@@ -872,7 +922,11 @@ class ChatService:
                 detail=f"provider '{route.provider}' is not configured",
             )
 
-        model_name = requested_model or route.model
+        model_name = (
+            requested_model
+            if requested_model and self._provider_accepts_model(route.provider, requested_model)
+            else route.model
+        )
         retries = max(1, self._provider_retries(route.provider))
         last_error: str | None = None
         provider_request = _chat_request_for_route_with_redaction(
@@ -1086,12 +1140,20 @@ class ChatService:
 
 
 def _task_from_messages(request: ChatCompletionRequest) -> str:
-    user_messages = [
-        message.content for message in request.messages if message.role == "user"
-    ]
-    if user_messages:
-        return user_messages[-1]
-    return request.messages[-1].content
+    user_messages = [message for message in request.messages if message.role == "user"]
+    message = user_messages[-1] if user_messages else request.messages[-1]
+    text = content_text(message.content)
+    if text.strip():
+        return text
+    if content_has_non_text(message.content):
+        return "[non-text content]"
+    # Tool-result turns in agent loops often have an empty user message;
+    # fall back to the most recent message with any text.
+    for previous in reversed(request.messages):
+        previous_text = content_text(previous.content)
+        if previous_text.strip():
+            return previous_text
+    return "[empty message]"
 
 
 def _route_request_from_chat(
@@ -1128,11 +1190,22 @@ def _chat_request_for_route_with_redaction(
     messages: list[ChatMessage] = []
     for message in request.messages:
         content = message.content
-        if content is not None:
+        if isinstance(content, str):
             redacted = redact_sensitive_text(content)
             content = redacted.text
             replacement_count += redacted.replacement_count
             categories = _merge_categories(categories, redacted.categories)
+        elif isinstance(content, list):
+            redacted_parts: list[dict[str, object]] = []
+            for part in content:
+                text = part.get("text") if isinstance(part, dict) else None
+                if isinstance(text, str):
+                    redacted = redact_sensitive_text(text)
+                    replacement_count += redacted.replacement_count
+                    categories = _merge_categories(categories, redacted.categories)
+                    part = {**part, "text": redacted.text}
+                redacted_parts.append(part)
+            content = redacted_parts
         tool_calls = _redact_json_strings(message.tool_calls, categories)
         categories = _merge_categories(categories, tool_calls[1])
         replacement_count += tool_calls[2]
@@ -1417,6 +1490,14 @@ def _build_responses_response(
     )
 
 
+_FINISH_REASON_TO_STOP_REASON = {
+    "stop": "end_turn",
+    "length": "max_tokens",
+    "tool_calls": "tool_use",
+    "content_filter": "refusal",
+}
+
+
 def _build_anthropic_response(
     chat_response: ChatCompletionResponse,
 ) -> AnthropicMessagesResponse:
@@ -1438,8 +1519,8 @@ def _build_anthropic_response(
         id=f"msg_{chat_response.id}",
         content=content,
         model=chat_response.model,
-        stop_reason=(
-            "tool_use" if choice.finish_reason == "tool_calls" else choice.finish_reason
+        stop_reason=_FINISH_REASON_TO_STOP_REASON.get(
+            choice.finish_reason, choice.finish_reason
         ),
         stop_sequence=None,
         usage=AnthropicUsage(
@@ -1464,10 +1545,27 @@ def _task_from_embedding_input(value: str | list[str]) -> str:
     return " ".join(value)
 
 
+PRIVATE_MODEL_ALIASES = {"routelabs/private", "route-private", "private"}
+AUTO_MODEL_ALIASES = {"route-auto", "auto", "routelabs/auto"} | PRIVATE_MODEL_ALIASES
+
+_ANTHROPIC_MODEL_PATTERN = re.compile(r"^(?:anthropic/)?claude-")
+_OPENAI_MODEL_PATTERN = re.compile(r"^(?:openai/)?(?:gpt-(?!oss)|o\d|chatgpt-|codex-)")
+
+
+def _model_family(model: str | None) -> str | None:
+    if not model:
+        return None
+    if _ANTHROPIC_MODEL_PATTERN.match(model):
+        return "anthropic"
+    if _OPENAI_MODEL_PATTERN.match(model):
+        return "openai"
+    return None
+
+
 def _requested_model_override(model: str | None) -> str | None:
     if model is None:
         return None
-    if model in {"route-auto", "auto"}:
+    if model in AUTO_MODEL_ALIASES:
         return None
     return model
 
@@ -1489,8 +1587,8 @@ def _responses_request_to_chat_request(
         strip_pii=request.strip_pii,
         stream=request.stream,
         response_format=response_format,
-        tools=request.tools,
-        tool_choice=request.tool_choice,
+        tools=_responses_tools_to_chat_tools(request.tools),
+        tool_choice=_responses_tool_choice_to_chat(request.tool_choice),
         temperature=request.temperature,
         top_p=request.top_p,
         max_tokens=request.max_output_tokens,
@@ -1537,27 +1635,44 @@ def _messages_from_responses_input(value: str | list[object]) -> list[ChatMessag
     for item in value:
         if not isinstance(item, dict):
             continue
-        if item.get("type") == "input_text":
+        item_type = item.get("type")
+        if item_type in {"input_text", "input_image"}:
+            messages.append(
+                ChatMessage(role="user", content=_responses_content_to_chat([item]))
+            )
+            continue
+        if item_type == "function_call":
+            tool_call = {
+                "id": str(item.get("call_id") or item.get("id") or "call"),
+                "type": "function",
+                "function": {
+                    "name": str(item.get("name", "")),
+                    "arguments": _arguments_string(item.get("arguments")),
+                },
+            }
+            previous = messages[-1] if messages else None
+            if previous is not None and previous.role == "assistant":
+                # Parallel calls (and text followed by calls) belong to one turn.
+                previous.tool_calls = [*(previous.tool_calls or []), tool_call]
+            else:
+                messages.append(
+                    ChatMessage(role="assistant", content=None, tool_calls=[tool_call])
+                )
+            continue
+        if item_type == "function_call_output":
             messages.append(
                 ChatMessage(
-                    role="user",
-                    content=_extract_responses_content([item]),
+                    role="tool",
+                    content=_extract_responses_content(item.get("output")),
+                    tool_call_id=str(item.get("call_id", "")) or None,
                 )
             )
             continue
-        if "role" in item:
+        if "role" in item or item_type == "message":
             messages.append(
                 ChatMessage(
                     role=str(item.get("role", "user")),
-                    content=_extract_responses_content(item.get("content")),
-                )
-            )
-            continue
-        if item.get("type") == "message":
-            messages.append(
-                ChatMessage(
-                    role=str(item.get("role", "user")),
-                    content=_extract_responses_content(item.get("content")),
+                    content=_responses_content_to_chat(item.get("content")),
                 )
             )
 
@@ -1567,6 +1682,77 @@ def _messages_from_responses_input(value: str | list[object]) -> list[ChatMessag
             detail="responses input must include at least one user or message item",
         )
     return messages
+
+
+def _arguments_string(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value if value is not None else {})
+
+
+def _responses_content_to_chat(value: object) -> str | list[dict[str, object]]:
+    """Keep text-only content as a string; convert images to chat parts."""
+    if not isinstance(value, list):
+        return _extract_responses_content(value)
+    parts: list[dict[str, object]] = []
+    has_image = False
+    for item in value:
+        if isinstance(item, str):
+            parts.append({"type": "text", "text": item})
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "input_image":
+            url = item.get("image_url")
+            if isinstance(url, dict):
+                url = url.get("url")
+            if isinstance(url, str) and url:
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+                has_image = True
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            parts.append({"type": "text", "text": text})
+    if not has_image:
+        return _extract_responses_content(value)
+    return parts
+
+
+def _responses_tools_to_chat_tools(
+    tools: list[dict[str, object]] | None,
+) -> list[dict[str, object]] | None:
+    """Responses tools are flat; chat tools nest the definition under `function`."""
+    if tools is None:
+        return None
+    converted: list[dict[str, object]] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            continue  # hosted tools (web_search, file_search, ...) cannot run locally
+        if isinstance(tool.get("function"), dict):
+            converted.append(tool)
+            continue
+        function: dict[str, object] = {
+            "name": tool.get("name", ""),
+            "parameters": tool.get("parameters") or {"type": "object", "properties": {}},
+        }
+        if tool.get("description"):
+            function["description"] = tool["description"]
+        if tool.get("strict") is not None:
+            function["strict"] = tool["strict"]
+        converted.append({"type": "function", "function": function})
+    return converted or None
+
+
+def _responses_tool_choice_to_chat(
+    tool_choice: str | dict[str, object] | None,
+) -> str | dict[str, object] | None:
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        if isinstance(tool_choice.get("function"), dict):
+            return tool_choice
+        name = tool_choice.get("name")
+        if isinstance(name, str) and name:
+            return {"type": "function", "function": {"name": name}}
+    return tool_choice
 
 
 def _extract_responses_content(value: object) -> str:
@@ -1602,6 +1788,7 @@ def _chat_messages_from_anthropic_message(
         return [ChatMessage(role=role, content=str(content))]
 
     text_parts: list[str] = []
+    image_parts: list[dict[str, object]] = []
     tool_calls: list[dict[str, object]] = []
     messages: list[ChatMessage] = []
     for block in content:
@@ -1612,6 +1799,10 @@ def _chat_messages_from_anthropic_message(
             text = block.get("text")
             if isinstance(text, str):
                 text_parts.append(text)
+        elif block_type == "image":
+            image_part = _anthropic_image_to_chat_part(block.get("source"))
+            if image_part is not None:
+                image_parts.append(image_part)
         elif block_type == "tool_use":
             tool_calls.append(
                 {
@@ -1633,16 +1824,32 @@ def _chat_messages_from_anthropic_message(
                 )
             )
 
-    if text_parts or tool_calls:
-        messages.insert(
-            0,
-            ChatMessage(
-                role=role,
-                content="\n".join(text_parts) if text_parts else "",
-                tool_calls=tool_calls or None,
-            ),
-        )
+    if text_parts or tool_calls or image_parts:
+        text = "\n".join(text_parts)
+        content: str | list[dict[str, object]] = text
+        if image_parts:
+            content = [*image_parts, *([{"type": "text", "text": text}] if text else [])]
+        message = ChatMessage(role=role, content=content, tool_calls=tool_calls or None)
+        # Anthropic puts tool_result blocks first in a user turn; keep them
+        # immediately after the assistant tool call they answer.
+        if messages and role == "user":
+            messages.append(message)
+        else:
+            messages.insert(0, message)
     return messages
+
+
+def _anthropic_image_to_chat_part(source: object) -> dict[str, object] | None:
+    if not isinstance(source, dict):
+        return None
+    if source.get("type") == "base64" and isinstance(source.get("data"), str):
+        media_type = source.get("media_type") or "image/png"
+        url = f"data:{media_type};base64,{source['data']}"
+    elif source.get("type") == "url" and isinstance(source.get("url"), str):
+        url = source["url"]
+    else:
+        return None
+    return {"type": "image_url", "image_url": {"url": url}}
 
 
 def _map_anthropic_tools_to_openai(

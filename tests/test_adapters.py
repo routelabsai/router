@@ -199,3 +199,144 @@ def test_anthropic_adapter_maps_messages_tools_and_usage(monkeypatch) -> None:
     assert result.finish_reason == "tool_calls"
     assert result.tool_calls[0]["function"]["name"] == "get_weather"
     assert result.usage.total_tokens == 20
+
+
+def _anthropic_adapter(monkeypatch, response: dict | None = None):
+    fake = CapturingHTTPClient(
+        response
+        or {
+            "content": [{"type": "text", "text": "ok"}],
+            "model": "claude-sonnet-5-5",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    )
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+    adapter = AnthropicChatAdapter(
+        DEFAULT_CONFIG.providers.cloud.anthropic.model_copy(update={"api_key": "k"})
+    )
+    return adapter, fake
+
+
+def test_anthropic_adapter_converts_content_parts_and_developer_role(monkeypatch) -> None:
+    adapter, fake = _anthropic_adapter(monkeypatch)
+    adapter.complete(
+        ChatCompletionRequest(
+            messages=[
+                ChatMessage(role="developer", content="Be terse."),
+                ChatMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "What is this?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/jpeg;base64,QUJD"},
+                        },
+                    ],
+                ),
+            ]
+        ),
+        model="claude-sonnet-5-5",
+    )
+    payload = fake.calls[0][2]
+    assert payload["system"] == "Be terse."
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is this?"},
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJD"},
+                },
+            ],
+        }
+    ]
+    assert payload["max_tokens"] == 16000
+
+
+def test_anthropic_adapter_drops_sampling_and_forced_tools_for_current_models(
+    monkeypatch,
+) -> None:
+    adapter, fake = _anthropic_adapter(monkeypatch)
+    request = ChatCompletionRequest(
+        messages=[ChatMessage(role="user", content="hi")],
+        temperature=0.2,
+        top_p=0.9,
+        tools=[{"type": "function", "function": {"name": "ls", "parameters": {}}}],
+        tool_choice="required",
+    )
+    adapter.complete(request, model="claude-sonnet-5-5")
+    current = fake.calls[-1][2]
+    assert "temperature" not in current and "top_p" not in current
+    assert current["tool_choice"] == {"type": "auto"}
+
+    adapter.complete(request, model="claude-sonnet-4-5-20250929")
+    legacy = fake.calls[-1][2]
+    assert legacy["temperature"] == 0.2
+    assert legacy["tool_choice"] == {"type": "any"}
+
+
+def test_anthropic_adapter_maps_max_tokens_stop_reason_to_length(monkeypatch) -> None:
+    adapter, _ = _anthropic_adapter(
+        monkeypatch,
+        {
+            "content": [{"type": "text", "text": "partial"}],
+            "model": "claude-sonnet-5-5",
+            "stop_reason": "max_tokens",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
+    )
+    result = adapter.complete(ChatCompletionRequest(messages=[ChatMessage(role="user", content="hi")]))
+    assert result.finish_reason == "length"
+
+
+def test_openai_adapter_uses_max_completion_tokens_for_reasoning_models(monkeypatch) -> None:
+    fake = CapturingHTTPClient(
+        {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "model": "m"}
+    )
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+    adapter = OpenAICompatibleChatAdapter(
+        DEFAULT_CONFIG.providers.cloud.openai_compatible.model_copy(update={"api_key": "k"})
+    )
+    request = ChatCompletionRequest(
+        messages=[
+            ChatMessage(role="developer", content="Be terse."),
+            ChatMessage(role="user", content="hi"),
+        ],
+        max_completion_tokens=50,
+        temperature=0.3,
+    )
+
+    adapter.complete(request, model="gpt-5-mini")
+    reasoning = fake.calls[-1][2]
+    assert reasoning["max_completion_tokens"] == 50
+    assert "max_tokens" not in reasoning and "temperature" not in reasoning
+    assert reasoning["messages"][0]["role"] == "developer"
+
+    adapter.complete(request, model="qwen3-4b-instruct")
+    local = fake.calls[-1][2]
+    assert local["max_tokens"] == 50 and local["temperature"] == 0.3
+    assert local["messages"][0]["role"] == "system"
+    assert "tool_name" not in local["messages"][1]
+
+
+def test_ollama_adapter_forwards_data_url_images(monkeypatch) -> None:
+    fake = CapturingHTTPClient({"message": {"content": "ok"}, "model": "qwen3:4b"})
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: fake)
+    adapter = OllamaChatAdapter(DEFAULT_CONFIG.providers.local.ollama)
+    adapter.complete(
+        ChatCompletionRequest(
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "describe"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                    ],
+                )
+            ]
+        )
+    )
+    message = fake.calls[0][2]["messages"][0]
+    assert message == {"role": "user", "content": "describe", "images": ["QUJD"]}

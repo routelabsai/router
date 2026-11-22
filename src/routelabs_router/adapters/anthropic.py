@@ -1,11 +1,17 @@
 import json
+import re
 from typing import Any
 
 import httpx
 
 from routelabs_router.adapters.base import ProviderExecutionError
 from routelabs_router.config import ProviderConfig
-from routelabs_router.models import ChatCompletionRequest, ChatMessage, ProviderResult
+from routelabs_router.models import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ProviderResult,
+    content_text,
+)
 
 
 class AnthropicChatAdapter:
@@ -51,6 +57,31 @@ class AnthropicChatAdapter:
         )
 
 
+DEFAULT_MAX_TOKENS = 16000
+
+# Claude models released before Opus 4.7 still accept sampling parameters;
+# newer models reject non-default temperature/top_p with a 400.
+_LEGACY_SAMPLING_PATTERN = re.compile(
+    r"^claude-(?:3|instant|2|(?:opus|sonnet|haiku)-4(?:-[0-6])?(?:-\d{8})?$|"
+    r"(?:opus|sonnet|haiku)-4-[0-6]-\d{8}$)"
+)
+# Models that reject forced tool use (`tool_choice` of type any/tool).
+_NO_FORCED_TOOL_PATTERN = re.compile(
+    r"^claude-(?:fable-5-[1-9]|mythos-5-[1-9]|opus-5-[1-9]|sonnet-5-[1-9]|"
+    r"(?:fable|mythos|opus|sonnet)-[6-9])"
+)
+
+
+def _supports_sampling(model: str) -> bool:
+    if not model.startswith("claude-"):
+        return True  # e.g. a proxy alias; pass parameters through unchanged
+    return bool(_LEGACY_SAMPLING_PATTERN.match(model))
+
+
+def _supports_forced_tool_choice(model: str) -> bool:
+    return not _NO_FORCED_TOOL_PATTERN.match(model)
+
+
 def _build_anthropic_payload(
     request: ChatCompletionRequest,
     model: str,
@@ -58,9 +89,10 @@ def _build_anthropic_payload(
     system_blocks = []
     messages = []
     for message in request.messages:
-        if message.role == "system":
-            if message.content:
-                system_blocks.append({"type": "text", "text": message.content})
+        if message.role in {"system", "developer"}:
+            text = content_text(message.content)
+            if text:
+                system_blocks.append({"type": "text", "text": text})
             continue
         converted = _serialize_message(message)
         if converted is not None:
@@ -69,14 +101,15 @@ def _build_anthropic_payload(
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_tokens": request.max_tokens or 1024,
+        "max_tokens": request.output_token_limit or DEFAULT_MAX_TOKENS,
     }
     if system_blocks:
         payload["system"] = system_blocks if len(system_blocks) > 1 else system_blocks[0]["text"]
-    if request.temperature is not None:
-        payload["temperature"] = request.temperature
-    if request.top_p is not None:
-        payload["top_p"] = request.top_p
+    if _supports_sampling(model):
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
     if request.stop is not None:
         payload["stop_sequences"] = (
             request.stop if isinstance(request.stop, list) else [request.stop]
@@ -84,6 +117,12 @@ def _build_anthropic_payload(
     if request.tools is not None:
         payload["tools"] = _map_tools(request.tools)
     tool_choice = _map_tool_choice(request.tool_choice)
+    if (
+        tool_choice is not None
+        and tool_choice.get("type") in {"any", "tool"}
+        and not _supports_forced_tool_choice(model)
+    ):
+        tool_choice = {"type": "auto"}
     if tool_choice is not None:
         payload["tool_choice"] = tool_choice
     return payload
@@ -94,14 +133,12 @@ def _serialize_message(message: ChatMessage) -> dict[str, Any] | None:
         tool_result = {
             "type": "tool_result",
             "tool_use_id": message.tool_call_id or message.name or "tool_result",
-            "content": message.content or "",
+            "content": content_text(message.content),
         }
         return {"role": "user", "content": [tool_result]}
 
     role = "assistant" if message.role == "assistant" else "user"
-    content: list[dict[str, Any]] = []
-    if message.content:
-        content.append({"type": "text", "text": message.content})
+    content: list[dict[str, Any]] = _content_blocks(message.content)
     for tool_call in message.tool_calls or []:
         function = tool_call.get("function", {})
         content.append(
@@ -114,7 +151,42 @@ def _serialize_message(message: ChatMessage) -> dict[str, Any] | None:
         )
     if not content:
         return None
-    return {"role": role, "content": content if len(content) > 1 else content}
+    return {"role": role, "content": content}
+
+
+def _content_blocks(content: str | list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    blocks: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type in {"text", "input_text", "output_text"}:
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                blocks.append({"type": "text", "text": text})
+        elif part_type == "image_url":
+            image = _image_block(part.get("image_url"))
+            if image is not None:
+                blocks.append(image)
+    return blocks
+
+
+def _image_block(image_url: Any) -> dict[str, Any] | None:
+    url = image_url.get("url") if isinstance(image_url, dict) else image_url
+    if not isinstance(url, str) or not url:
+        return None
+    if url.startswith("data:") and "," in url:
+        header, data = url.split(",", 1)
+        media_type = header[5:].split(";", 1)[0] or "image/png"
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": data},
+        }
+    return {"type": "image", "source": {"type": "url", "url": url}}
 
 
 def _map_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -137,8 +209,10 @@ def _map_tool_choice(
     if tool_choice is None:
         return None
     if isinstance(tool_choice, str):
-        if tool_choice in {"auto", "any"}:
+        if tool_choice in {"auto", "any", "none"}:
             return {"type": tool_choice}
+        if tool_choice == "required":
+            return {"type": "any"}
         return None
     if tool_choice.get("type") == "function":
         function = tool_choice.get("function", {})
@@ -196,9 +270,17 @@ def _extract_finish_reason(data: dict[str, Any]) -> str:
     if _extract_tool_calls(data):
         return "tool_calls"
     stop_reason = data.get("stop_reason")
-    if stop_reason == "end_turn":
-        return "stop"
-    return str(stop_reason or "stop")
+    return _STOP_REASON_TO_FINISH_REASON.get(str(stop_reason), str(stop_reason or "stop"))
+
+
+_STOP_REASON_TO_FINISH_REASON = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "pause_turn": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "refusal": "content_filter",
+}
 
 
 def _extract_usage(data: dict[str, Any]) -> dict[str, int]:

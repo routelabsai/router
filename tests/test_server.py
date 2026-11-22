@@ -1,3 +1,4 @@
+import json
 import httpx
 from fastapi.testclient import TestClient
 
@@ -1510,7 +1511,12 @@ def test_chat_completions_stream_text_chunks() -> None:
     assert response.headers["content-type"].startswith("text/event-stream")
     body = response.text
     assert "chat.completion.chunk" in body
-    assert "\"content\": \"echo: \"" in body
+    streamed = "".join(
+        json.loads(line[6:])["choices"][0]["delta"].get("content", "")
+        for line in body.splitlines()
+        if line.startswith("data: {")
+    )
+    assert streamed == "echo: summarize this document"
     assert "data: [DONE]" in body
 
 
@@ -2119,3 +2125,278 @@ def test_embeddings_requests_are_recorded_in_stats_and_logs() -> None:
     latest = logs_response.json()["entries"][0]
     assert latest["request_kind"] == "embeddings"
     assert latest["trace"]["attempts"][0]["duration_ms"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# Client-compatibility regressions (real SDK / agent payload shapes)
+# ---------------------------------------------------------------------------
+
+CODE_ANSWER = "Here:\n\n```python\ndef f():\n    return 1\n```\n"
+
+
+class RecordingProvider:
+    def __init__(self, content: str = CODE_ANSWER, tool_calls=None) -> None:
+        self.content = content
+        self.tool_calls = tool_calls
+        self.requests: list[ChatCompletionRequest] = []
+        self.models: list[str | None] = []
+
+    def complete(self, request: ChatCompletionRequest, model: str | None = None) -> ProviderResult:
+        self.requests.append(request)
+        self.models.append(model)
+        return ProviderResult(
+            content=self.content,
+            model=model or "recorded-model",
+            finish_reason="tool_calls" if self.tool_calls else "stop",
+            tool_calls=self.tool_calls,
+        )
+
+
+def _compat_client(**providers) -> TestClient:
+    local = providers.pop("local", RecordingProvider())
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={"ollama": local, **providers},
+    )
+    return TestClient(create_app(service=service))
+
+
+def _sse_payloads(body: str) -> list[dict]:
+    return [
+        json.loads(line[6:])
+        for line in body.splitlines()
+        if line.startswith("data: {")
+    ]
+
+
+def test_chat_accepts_openai_content_part_arrays() -> None:
+    local = RecordingProvider()
+    client = _compat_client(local=local)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    )
+    assert response.status_code == 200
+    assert local.requests[0].messages[0].content == [{"type": "text", "text": "hi"}]
+
+
+def test_streams_preserve_whitespace_for_every_api_surface() -> None:
+    client = _compat_client()
+    chat = client.post(
+        "/v1/chat/completions",
+        json={"stream": True, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    chat_text = "".join(
+        chunk["choices"][0]["delta"].get("content", "")
+        for chunk in _sse_payloads(chat.text)
+        if chunk["choices"]
+    )
+    assert chat_text == CODE_ANSWER
+
+    anthropic = client.post(
+        "/v1/messages",
+        json={"stream": True, "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    events = _sse_payloads(anthropic.text)
+    assert events[0]["message"]["content"] == []
+    assert events[1]["content_block"] == {"type": "text", "text": ""}
+    anthropic_text = "".join(
+        event["delta"]["text"]
+        for event in events
+        if event["type"] == "content_block_delta"
+    )
+    assert anthropic_text == CODE_ANSWER
+
+    responses = client.post("/v1/responses", json={"stream": True, "input": "hi"})
+    events = _sse_payloads(responses.text)
+    added = next(e for e in events if e["type"] == "response.output_item.added")
+    assert added["item"]["content"] == []
+    deltas = "".join(e["delta"] for e in events if e["type"] == "response.output_text.delta")
+    assert deltas == CODE_ANSWER
+    assert [e["sequence_number"] for e in events] == list(range(len(events)))
+
+
+def test_chat_stream_includes_tool_call_index_and_usage_chunk() -> None:
+    local = RecordingProvider(
+        content="",
+        tool_calls=[
+            {"id": "call_1", "type": "function", "function": {"name": "ls", "arguments": "{}"}}
+        ],
+    )
+    client = _compat_client(local=local)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "messages": [{"role": "user", "content": "list files"}],
+        },
+    )
+    chunks = _sse_payloads(response.text)
+    tool_chunk = next(c for c in chunks if c["choices"] and "tool_calls" in c["choices"][0]["delta"])
+    assert tool_chunk["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+    assert chunks[-1]["choices"] == [] and "total_tokens" in chunks[-1]["usage"]
+
+
+def test_responses_function_call_loop_and_flat_tools_are_converted() -> None:
+    local = RecordingProvider()
+    client = _compat_client(local=local)
+    response = client.post(
+        "/v1/responses",
+        json={
+            "tools": [{"type": "function", "name": "ls", "parameters": {"type": "object"}}],
+            "input": [
+                {"role": "user", "content": "run ls"},
+                {"type": "function_call", "call_id": "c1", "name": "ls", "arguments": "{}"},
+                {"type": "function_call", "call_id": "c2", "name": "ls", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "a.txt"},
+                {"type": "function_call_output", "call_id": "c2", "output": "b.txt"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    sent = local.requests[0]
+    assert [m.role for m in sent.messages] == ["user", "assistant", "tool", "tool"]
+    assert [c["id"] for c in sent.messages[1].tool_calls] == ["c1", "c2"]
+    assert sent.messages[2].tool_call_id == "c1"
+    assert sent.tools == [
+        {"type": "function", "function": {"name": "ls", "parameters": {"type": "object"}}}
+    ]
+
+
+def test_anthropic_images_and_tool_result_order_are_preserved() -> None:
+    local = RecordingProvider()
+    client = _compat_client(local=local)
+    response = client.post(
+        "/v1/messages",
+        json={
+            "max_tokens": 64,
+            "messages": [
+                {"role": "user", "content": "read the file"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "t1", "name": "read", "input": {}}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t1", "content": "data"},
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": "image/png", "data": "QQ=="},
+                        },
+                        {"type": "text", "text": "and this screenshot"},
+                    ],
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["stop_reason"] == "end_turn"
+    messages = local.requests[0].messages
+    assert [m.role for m in messages] == ["user", "assistant", "tool", "user"]
+    assert messages[3].content[0] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,QQ=="},
+    }
+
+
+def test_anthropic_count_tokens_endpoint() -> None:
+    client = _compat_client()
+    response = client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "claude-sonnet-5-5", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert response.status_code == 200
+    assert response.json()["input_tokens"] > 0
+
+
+def test_vendor_model_names_are_not_forwarded_to_local_providers() -> None:
+    local = RecordingProvider()
+    client = _compat_client(local=local)
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-sonnet-5-5",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "summarize this paragraph"}],
+        },
+    )
+    assert response.status_code == 200
+    assert local.models == [DEFAULT_CONFIG.providers.local.ollama.model]
+
+
+def test_claude_models_escalate_to_anthropic_when_both_clouds_exist() -> None:
+    local = RecordingProvider()
+    openai_cloud = RecordingProvider()
+    anthropic_cloud = RecordingProvider()
+    service = ChatService(
+        DEFAULT_CONFIG,
+        router=RouterEngine(DEFAULT_CONFIG),
+        providers={
+            "ollama": local,
+            "openai-compatible": openai_cloud,
+            "anthropic": anthropic_cloud,
+        },
+    )
+    decision = service._cloud_route("high", requested_model="claude-sonnet-5-5")
+    assert decision.provider == "anthropic"
+    assert service._cloud_route("high", requested_model="gpt-5-mini").provider == (
+        "openai-compatible"
+    )
+    assert not service._provider_accepts_model("ollama", "claude-sonnet-5-5")
+    assert service._provider_accepts_model("ollama", "gpt-oss:20b")
+
+
+def test_routing_headers_and_private_model_alias() -> None:
+    client = _compat_client()
+    task = "Design a distributed consensus architecture with tradeoffs and failure analysis"
+
+    by_header = client.post(
+        "/v1/chat/completions",
+        headers={"x-routelabs-private": "true"},
+        json={"messages": [{"role": "user", "content": task}]},
+    )
+    assert by_header.status_code == 200
+    assert by_header.headers["x-routelabs-target"] == "local"
+    assert by_header.headers["x-routelabs-provider"] == "ollama"
+    assert by_header.headers["x-routelabs-request-id"] == by_header.json()["id"]
+
+    by_alias = client.post(
+        "/v1/chat/completions",
+        json={"model": "routelabs/private", "messages": [{"role": "user", "content": task}]},
+    )
+    assert by_alias.json()["route"]["target"] == "local"
+
+    bad = client.post(
+        "/v1/chat/completions",
+        headers={"x-routelabs-private": "maybe"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert bad.status_code == 400
+
+
+def test_api_key_auth_protects_v1_routes(monkeypatch) -> None:
+    monkeypatch.setenv("ROUTELABS_API_KEY", "secret-key")
+    client = _compat_client()
+    body = {"messages": [{"role": "user", "content": "hi"}]}
+
+    assert client.get("/healthz").status_code == 200
+    assert client.post("/v1/chat/completions", json=body).status_code == 401
+    assert (
+        client.post(
+            "/v1/chat/completions", json=body, headers={"authorization": "Bearer wrong"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/v1/chat/completions", json=body, headers={"authorization": "Bearer secret-key"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/v1/chat/completions", json=body, headers={"x-api-key": "secret-key"}).status_code
+        == 200
+    )
