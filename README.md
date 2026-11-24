@@ -9,6 +9,10 @@
 sensitive workloads, and applications that need to choose between local and
 cloud LLMs without hiding the decision.
 
+![RouteLabs Router demo: a sensitive prompt is kept local, and a streamed answer shows its first token after 0.15s with live model reasoning](https://raw.githubusercontent.com/routelabsai/router/main/docs/assets/demo.gif)
+
+<sub>Real recording, played at 2.5× speed: `qwen3:4b` on Ollama, no API keys. Run it yourself with `router start`, then `python examples/live-demo.py`.</sub>
+
 It lets you keep the client surface your app already uses while adding:
 
 - local-first execution
@@ -1291,6 +1295,7 @@ curl -X POST http://127.0.0.1:8000/v1/route \
 
 ### More examples
 
+- Live terminal demo (routing decisions, streaming with reasoning, stats): [examples/live-demo.py](examples/live-demo.py)
 - curl walkthrough: [`examples/curl-quickstart.md`](examples/curl-quickstart.md)
 - product framing and common scenarios: [`examples/use-cases.md`](examples/use-cases.md)
 - agent loop walkthrough: [`examples/agent-loop.md`](examples/agent-loop.md)
